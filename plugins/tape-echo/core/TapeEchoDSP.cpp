@@ -462,10 +462,17 @@ namespace
     // unity there: it shapes the low end and leaves the calibrated midband
     // record level alone. (Unscaled, the pair read -0.088 dB at 1 kHz, enough
     // to move the record envelope at the hottest ladder rungs.)
+    //
+    // The reference point is held below Nyquist: at the 1 kHz rate
+    // clap-validator exercises, 1 kHz IS the sampling rate, where the bilinear
+    // response is its DC gain (0.053 for the shape), and normalizing there put
+    // +25 dB into the loop. Below 4 kHz it moves to fs / 4; at and above, it
+    // is exactly 1 kHz, so every audio rate is unchanged.
     inline double gainAt1k(double fs, double b0, double b1, double b2,
                            double a1, double a2) noexcept
     {
-        const double w = 2.0 * 3.14159265358979323846 * 1000.0 / fs;
+        const double hz = std::min(1000.0, 0.25 * fs);
+        const double w = 2.0 * 3.14159265358979323846 * hz / fs;
         const double c1 = std::cos(w), s1 = std::sin(w);
         const double c2 = std::cos(2.0 * w), s2 = std::sin(2.0 * w);
         const double nr = b0 + b1 * c1 + b2 * c2, ni = -(b1 * s1 + b2 * s2);
@@ -609,7 +616,7 @@ void SpringReverb::Spring::prepare(double fs, float oneWaySeconds,
                                    float reflectionAmount, float gain,
                                    double advanceSeconds,
                                    const BiquadCoeffs& reflectionLoss,
-                                   DispersionBank& dispersion, int index)
+                                   DispersionBank& bank, int index)
 {
     const int outgoingSamples = std::max(
         16, (int)std::lround(((double)oneWaySeconds - advanceSeconds) * fs));
@@ -675,8 +682,8 @@ void SpringReverb::Spring::prepare(double fs, float oneWaySeconds,
         const BiquadCoeffs coeffs {
             radiusSquared, radial, 1.0f, radial, radiusSquared
         };
-        dispersion.setCoeffs(i, 2 * index, coeffs);       // returning
-        dispersion.setCoeffs(i, 2 * index + 1, coeffs);   // outgoing
+        bank.setCoeffs(i, 2 * index, coeffs);       // returning
+        bank.setCoeffs(i, 2 * index + 1, coeffs);   // outgoing
     }
 
     // Loss belongs at the termination: every completed trip is progressively
@@ -1387,8 +1394,12 @@ void TapeEchoDSP::prepare(double sampleRate, int /*maxBlockSize*/)
     transportIdx    = 0;
 
     // The clean spring feed's delay holds its time at every rate; at 48 kHz it
-    // is the measured 26.5 samples and the ring is the same 32 entries.
-    springFeedDelaySamples = (float)(kSpringFeedDelaySamplesAt48k * (fs / 48000.0));
+    // is the measured 26.5 samples and the ring is the same 32 entries. The
+    // ring is read before this sample is written, so the delay is held at one
+    // sample or more: below that (under ~1.8 kHz) the read would interpolate
+    // toward the slot about to be overwritten, the oldest one in the ring.
+    springFeedDelaySamples = (float)std::max(
+        1.0, kSpringFeedDelaySamplesAt48k * (fs / 48000.0));
     for (auto& ch : channels)
         ch.springCleanDelay.assign(
             (size_t)nextPowerOfTwo((int)std::ceil(springFeedDelaySamples) + 2), 0.0f);
@@ -1874,14 +1885,19 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
 
     constexpr float kVuSineCalibration = 1.110720735f;
 
-    // The per-sample work runs in four passes over sub-blocks: controls,
-    // modulation, noise and the whole input side (record envelope, preamp,
-    // spring send); the tape loop; the spring; the output mix. Each piece of
-    // state is still updated once per sample, in sample order, by the same
-    // expressions, so the output is bit-identical to one pass, but each pass
-    // is short enough for the CPU to overlap successive samples instead of
-    // waiting out one long dependency chain per sample. Only the tape loop
-    // reads what it writes, and it stays one pass in sample order.
+    // The per-sample work runs in passes over sub-blocks: controls,
+    // modulation, noise, the head delays and the input side up to the record
+    // low cut and the spring send; the head reads; the regeneration drive;
+    // the record detector and compressor law; the record stage's per-sample
+    // laws; the feeds' band limits; the x4 record saturation and the tape
+    // write; the spring; the output mix. Each piece of state is still updated
+    // once per sample, in sample order, by the same expressions, so the output
+    // does not depend on where the sub-blocks fall, and each pass is short
+    // enough for the CPU to overlap successive samples instead of waiting out
+    // one long dependency chain per sample. Only the tape loop reads what it
+    // writes: its heads read a whole sub-block before the record stage writes
+    // it, which is exact only while a sub-block is shorter than the shortest
+    // head delay (subBlockLimit, set in prepare()).
     SubBlockScratch x; // on the stack: 30 KB, see the struct
     for (int base = 0, len = 0; base < numSamples; base += len)
     {
@@ -2511,15 +2527,15 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
         for (int i = 0; i < len; ++i)
         {
             const float drivenInput = x.drivenInput[i];
-            const float power = x.power[i];
             const float loopDrive = x.loopDrive[i];
             const float recordEnvelopeNow = x.recordEnvelopeNow[i];
             const float postDriveGain = x.postDriveGain[i];
             Channel& ch = channels[0];
             // Meter point: after Input Volume, plus a quarter of the regeneration
             // drive (kMeterRegenAmount below). This deliberately ignores Input
-            // Send. drivenInput carries the power gate already (monoInput =
-            // power * ...), so both readings still die with POWER off.
+            // Send. drivenInput (monoInput = power * ...) and loopDrive (its
+            // gain is power * fbGain) both carry the power gate already, so
+            // both readings still die with POWER off.
             //
             // The regeneration term was `+ power * loopDrive` at full level. That
             // placement follows the reference plugin's manual, which says "echo
@@ -2563,7 +2579,7 @@ void TapeEchoDSP::processBlock(const float* const* inputs, float* const* outputs
             // its VU cannot be read programmatically. Treat 0.25 as provisional.
             constexpr float kMeterRegenAmount = 0.25f;
             const float recordMeterSignal =
-                drivenInput + kMeterRegenAmount * power * loopDrive;
+                drivenInput + kMeterRegenAmount * loopDrive;
             const float recordMeterMagnitude = std::abs(recordMeterSignal);
             // Average-responding VU, calibrated so a sine's average rectified value
             // reads its RMS amplitude. The peak lamp uses the unsmoothed magnitude.

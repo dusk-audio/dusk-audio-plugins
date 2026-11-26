@@ -223,7 +223,7 @@ private:
                       float dispersionScale, float reflectionAmount,
                       float gain, double advanceSeconds,
                       const BiquadCoeffs& reflectionLoss,
-                      DispersionBank& dispersion, int index);
+                      DispersionBank& bank, int index);
         void  reset();
         // The waves entering the dispersion chains: arriving back at the
         // driver, and arriving at the pickup end.
@@ -591,8 +591,8 @@ private:
     float memoOutputGain = 1.0f;
 
     // Per-sample values carried between the passes of one sub-block. Kept on
-    // the stack in processBlock (about 27 KB): as a member it measured 3-5 %
-    // slower (48 kHz core, default state), and 27 KB is far inside the audio
+    // the stack in processBlock (30 KB): as a member it measured 3-5 %
+    // slower (48 kHz core, default state), and 30 KB is far inside the audio
     // thread stacks hosts give plug-ins (512 KB and up on macOS, 1 MB on
     // Windows, 8 MB on Linux).
     struct SubBlockScratch
