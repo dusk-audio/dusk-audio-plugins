@@ -648,6 +648,52 @@ private:
         float tapeOs[kSize][4];
         float magneticAmplitude[kSize];
     };
+    // Pass 1 of processBlock (controlPass): its control smoothers, read once
+    // per sample, or once per sub-block while every one of them is at rest.
+    struct PassControls
+    {
+        float nominalT1, age, wowFlutter, noiseGain, head1, head2, head3,
+              intensity, revSend, echoRaw, revRaw, dryLvl, mix, outputVolume,
+              drive, power, inputSend;
+    };
+    // What depends only on the motor's delay in that pass.
+    struct PassMotor
+    {
+        float nominalMs, slow01, flutterInc, flutterDepth, speedScale,
+              spliceTailSamples;
+        double path1, path2, path3, lag2, lag3, loopPeriodSamples, spliceStep;
+    };
+    // The one list of the smoothers pass 1 reads, each with its field: the
+    // reads and the at-rest test both go through it.
+    template <class Visit>
+    void visitPassControls(Visit&& visit) noexcept
+    {
+        visit(delaySmoother, &PassControls::nominalT1);
+        visit(ageSmoother, &PassControls::age);
+        visit(wowFlutterSmoother, &PassControls::wowFlutter);
+        visit(noiseGainSmoother, &PassControls::noiseGain);
+        visit(headGain[0], &PassControls::head1);
+        visit(headGain[1], &PassControls::head2);
+        visit(headGain[2], &PassControls::head3);
+        visit(intensitySmoother, &PassControls::intensity);
+        visit(reverbSendSmoother, &PassControls::revSend);
+        visit(echoLevelSmoother, &PassControls::echoRaw);
+        visit(reverbLevelSmoother, &PassControls::revRaw);
+        visit(dryLevelSmoother, &PassControls::dryLvl);
+        visit(mixSmoother, &PassControls::mix);
+        visit(outputVolumeSmoother, &PassControls::outputVolume);
+        visit(driveSmoother, &PassControls::drive);
+        visit(powerSmoother, &PassControls::power);
+        visit(inputSendSmoother, &PassControls::inputSend);
+    }
+    template <bool kSettled>
+    void controlPass(SubBlockScratch& x, const float* const* inputs,
+                     int numChannels, int base, int len) noexcept;
+    bool controlsAtRest() noexcept;
+    // Test hooks: false forces pass 1's per-sample reads; the count of
+    // sub-blocks that took the settled reads (test-only, wraps harmlessly).
+    bool controlFastPathEnabled = true;
+    uint32_t settledControlBlocks = 0;
     float memoIntensity = 0.0f;
     float memoFbGain = 0.0f;
 

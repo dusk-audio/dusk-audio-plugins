@@ -1,4 +1,5 @@
 #include "TapeEchoDSP.hpp"
+#include "DuskDenormals.hpp"
 
 #include <algorithm>
 #include <array>
@@ -21,6 +22,8 @@ struct TapeEchoDSPTestAccess
     static auto innerUp(const TapeEchoDSP& dsp)   { return dsp.channels[0].feedUp2; }
     static auto innerDown(const TapeEchoDSP& dsp) { return dsp.channels[0].tapeDown2; }
     static auto outerDown(const TapeEchoDSP& dsp) { return dsp.channels[0].tapeDown1; }
+    static void setControlFastPath(TapeEchoDSP& dsp, bool enabled) { dsp.controlFastPathEnabled = enabled; }
+    static uint32_t settledControlBlocks(const TapeEchoDSP& dsp) { return dsp.settledControlBlocks; }
 };
 } // namespace duskaudio
 
@@ -487,12 +490,140 @@ bool detectorHilbertReadsAmplitude()
         }
     return true;
 }
+
+// SmoothedValue::atRest: true exactly when next() would leave the value's bits
+// unchanged. next() turns a -0 at a zero target into +0, and (with denormals
+// treated as zero) a subnormal value into +0, both of which == alone calls
+// equal; a NaN value is never at rest.
+bool smootherAtRestMatchesNext()
+{
+    duskaudio::SmoothedValue s;
+    s.prepare(48000.0, 0.01f);
+    const auto atRestIsExact = [](duskaudio::SmoothedValue v) {
+        const bool claimed = v.atRest();
+        const float before = v.value();
+        const float after = v.next();
+        return claimed == (std::memcmp(&before, &after, sizeof(float)) == 0);
+    };
+    bool ok = true;
+    s.snap(-0.0f);
+    ok = ok && !s.atRest() && atRestIsExact(s);
+    s.next();
+    ok = ok && s.atRest() && atRestIsExact(s);
+    s.snap(0.5f);
+    ok = ok && s.atRest() && atRestIsExact(s);
+    s.setTarget(1.0f);
+    ok = ok && !s.atRest() && atRestIsExact(s);
+    s.snap(std::numeric_limits<float>::quiet_NaN());
+    ok = ok && !s.atRest();
+    {
+        // As processBlock runs it: with denormals treated as zero, next() turns
+        // a subnormal value into +0, which == would call equal to it.
+        duskaudio::ScopedFlushDenormals ftz;
+        // Through a volatile, so the arithmetic runs under the flush mode
+        // instead of being folded at compile time.
+        volatile float subnormal = std::numeric_limits<float>::denorm_min();
+        s.snap(subnormal);
+        ok = ok && atRestIsExact(s);
+        s.next();
+        ok = ok && atRestIsExact(s);
+    }
+    if (!ok)
+        std::cerr << "SmoothedValue::atRest disagrees with next()\n";
+    return ok;
+}
+
+// Pass 1 reads its control smoothers once per sub-block while all of them are
+// at rest. Every control is automated in turn and the render compared, byte
+// for byte, against the same render with the per-sample reads forced. The
+// fast render must also take the settled reads for some sub-blocks but not
+// all, counted inside processBlock (whose floating-point mode decides where a
+// smoother comes to rest; a check from outside it would not see the same
+// fixed points).
+bool settledControlsMatchPerSampleReads()
+{
+    constexpr double rate = 48000.0;
+    constexpr int block = 97; // odd, so sub-blocks and changes fall off the 128 grid
+    const int total = (int)(16.0 * rate);
+    std::vector<float> input((size_t)total);
+    uint32_t seed = 11u;
+    for (int n = 0; n < total; ++n)
+    {
+        seed = seed * 1664525u + 1013904223u;
+        const float noise = (float)((double)seed / 4294967296.0 * 2.0 - 1.0);
+        input[(size_t)n] = 0.25f * sineAt(523.0, rate, (size_t)n) + 0.05f * noise;
+    }
+    using Change = void (*)(duskaudio::TapeEchoDSP&);
+    const std::pair<double, Change> changes[] = {
+        { 1.0, [](duskaudio::TapeEchoDSP& d) { d.setMode(11); } },
+        { 1.6, [](duskaudio::TapeEchoDSP& d) { d.setRepeatRate(0.8f); } },
+        { 2.2, [](duskaudio::TapeEchoDSP& d) { d.setTapeAge(1.0f); } },
+        { 2.8, [](duskaudio::TapeEchoDSP& d) { d.setIntensity(0.6f); } },
+        { 3.4, [](duskaudio::TapeEchoDSP& d) { d.setWowFlutter(0.8f); d.setNoise(0.6f); } },
+        { 4.0, [](duskaudio::TapeEchoDSP& d) { d.setEchoLevel(0.3f); d.setReverbLevel(0.7f); } },
+        { 4.6, [](duskaudio::TapeEchoDSP& d) { d.setDryLevel(0.2f); d.setMix(0.8f); } },
+        { 5.2, [](duskaudio::TapeEchoDSP& d) { d.setOutputVolume(0.6f); d.setInputGain(0.7f); } },
+        { 5.8, [](duskaudio::TapeEchoDSP& d) { d.setInputSend(false); } },
+        { 6.3, [](duskaudio::TapeEchoDSP& d) { d.setInputSend(true); d.setBypass(true); } },
+        { 6.9, [](duskaudio::TapeEchoDSP& d) { d.setBypass(false); d.setMode(3); } },
+    };
+    const auto render = [&](bool fastPath, uint32_t& settledBlocks, uint32_t& calls) {
+        duskaudio::TapeEchoDSP dsp;
+        Access::setControlFastPath(dsp, fastPath);
+        dsp.prepare(rate, block);
+        std::vector<float> out((size_t)total * 2);
+        std::vector<float> l(block), r(block), ol(block), orr(block);
+        size_t next = 0;
+        for (int pos = 0; pos < total; pos += block)
+        {
+            const int len = std::min(block, total - pos);
+            while (next < std::size(changes) && changes[next].first * rate <= (double)pos)
+                changes[next++].second(dsp);
+            for (int i = 0; i < len; ++i)
+                l[(size_t)i] = r[(size_t)i] = input[(size_t)(pos + i)];
+            const float* ins[] = { l.data(), r.data() };
+            float* outs[] = { ol.data(), orr.data() };
+            dsp.processBlock(ins, outs, 2, len);
+            ++calls;
+            for (int i = 0; i < len; ++i)
+            {
+                out[2 * (size_t)(pos + i)] = ol[(size_t)i];
+                out[2 * (size_t)(pos + i) + 1] = orr[(size_t)i];
+            }
+        }
+        settledBlocks = Access::settledControlBlocks(dsp);
+        return out;
+    };
+    uint32_t fastSettled = 0, slowSettled = 0, fastCalls = 0, slowCalls = 0;
+    const std::vector<float> fast = render(true, fastSettled, fastCalls);
+    const std::vector<float> slow = render(false, slowSettled, slowCalls);
+    // Block 97 is one sub-block per call. The fast render must take the
+    // settled reads for some sub-blocks but not all (the controls move), and
+    // the forced render never.
+    if (fastSettled == 0 || fastSettled >= fastCalls || slowSettled != 0)
+    {
+        std::cerr << "settled control pass taken " << fastSettled << " of " << fastCalls
+                  << " sub-blocks (forced render: " << slowSettled << ")\n";
+        return false;
+    }
+    if (std::memcmp(fast.data(), slow.data(), fast.size() * sizeof(float)) != 0)
+    {
+        size_t first = 0;
+        while (std::memcmp(&fast[first], &slow[first], sizeof(float)) == 0)
+            ++first;
+        std::cerr << "settled control pass differs from the per-sample reads at sample "
+                  << first / 2 << ": " << fast[first] << " vs " << slow[first] << '\n';
+        return false;
+    }
+    return true;
+}
 }
 
 int main()
 {
     if (!recordOversamplingMeetsDesign() || !biquadLanesMatchScalarChains()
-        || !detectorHilbertReadsAmplitude())
+        || !detectorHilbertReadsAmplitude() || !smootherAtRestMatchesNext()
+        || !settledControlsMatchPerSampleReads())
         return 1;
 
     const RenderResult oneSampleResult = renderWithBlockSize(1);
