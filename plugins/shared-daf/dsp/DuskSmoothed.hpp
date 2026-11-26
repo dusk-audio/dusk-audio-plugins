@@ -10,6 +10,7 @@
 #pragma once
 
 #include <cmath>
+#include <cstring>
 
 namespace duskaudio
 {
@@ -26,6 +27,19 @@ public:
     void  setTarget(float v) noexcept { target = v; }
     float next() noexcept             { current += coeff * (target - current); return current; }
     float value() const noexcept      { return current; }
+    // True when next() would leave the value's bits unchanged: the step rounds
+    // away and the value sits on its fixed point, so until the target moves
+    // every next() returns value(). It runs next() on a copy and compares the
+    // stored bits: == is not enough, since next() turns a -0 at a zero target
+    // into +0, and under denormals-are-zero (ScopedFlushDenormals on x86 and
+    // arm64) a subnormal value compares equal to the +0 next() turns it into.
+    // A NaN value is never at rest.
+    bool  atRest() const noexcept
+    {
+        SmoothedValue probe = *this;
+        const float after = probe.next();
+        return !std::isnan(after) && std::memcmp(&after, &current, sizeof(float)) == 0;
+    }
     float targetValue() const noexcept { return target; }
 
 private:
