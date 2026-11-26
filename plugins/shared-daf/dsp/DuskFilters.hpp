@@ -642,8 +642,11 @@ private:
 // `Lanes` independent chains of `Sections` Biquad sections each, run as lanes
 // of one loop (lane innermost) so a compiler vectorizes them. Every lane
 // performs Biquad::process's operations in its order, so each chain gives the
-// values a chain of Biquads would. Coefficients are per section and lane; a
-// lane left at zero coefficients and state outputs zero.
+// values a chain of Biquads would: bit for bit where the compiler fuses
+// multiply-adds alike in both (Clang's default, or -ffp-contract=off), to the
+// last bit otherwise (GCC's default fast contraction may fuse the vector loop
+// and the scalar one differently on targets with FMA). Coefficients are per
+// section and lane; a lane left at zero coefficients and state outputs zero.
 template <int Sections, int Lanes>
 struct BiquadLanes
 {

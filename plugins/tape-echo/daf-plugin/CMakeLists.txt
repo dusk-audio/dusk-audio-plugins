@@ -63,6 +63,13 @@ if(NOT CMAKE_CROSSCOMPILING)
         "${CMAKE_CURRENT_SOURCE_DIR}/../core"
         "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
     target_compile_features(TapeEchoCoreTest PRIVATE cxx_std_17)
+    # The core test asserts bit identity between code paths that do the same
+    # arithmetic (BiquadLanes against Biquad chains, block sizes against each
+    # other). GCC's default -ffp-contract=fast may fuse a multiply-add in one
+    # path and not the other on targets with FMA (arm64), a last-bit
+    # difference; with contraction off both paths round alike everywhere.
+    target_compile_options(TapeEchoCoreTest PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-ffp-contract=off>)
     add_test(NAME TapeEchoCore COMMAND TapeEchoCoreTest)
 
     # Exercise the actual shell and DSP with DAF's in-process host. The rate
