@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <vector>
 
 namespace duskaudio
@@ -266,7 +267,12 @@ double binLevelDb(const std::vector<float>& x, size_t offset, size_t length, siz
         re += (double)x[offset + i] * std::cos(phase);
         im -= (double)x[offset + i] * std::sin(phase);
     }
-    return 20.0 * std::log10(std::max(2.0 * std::hypot(re, im) / (double)length, 1.0e-30));
+    const double amplitude = 2.0 * std::hypot(re, im) / (double)length;
+    // A non-finite stage output must fail every bound, not drop out of the
+    // running maxima: report it as infinitely loud.
+    if (!std::isfinite(amplitude))
+        return std::numeric_limits<double>::infinity();
+    return 20.0 * std::log10(std::max(amplitude, 1.0e-30));
 }
 
 // The record path's x4 oversampling, stage by stage, with the coefficients
@@ -758,7 +764,9 @@ int main()
             dsp.processBlock(inputs, outputs, 2, block);
             for (const auto& channel : output)
                 for (const float v : channel)
-                    peak = std::max(peak, std::abs(v));
+                    // A non-finite sample fails the bound (std::max would skip it).
+                    peak = std::isfinite(v) ? std::max(peak, std::abs(v))
+                                            : std::numeric_limits<float>::infinity();
         }
         if (!(peak < 1.0e-4f))
         {
