@@ -1469,6 +1469,9 @@ void DuskVerbDSP::processBlock (const float* const* in, float* const* out,
                     preset->applyEngineConfig (*activeEngine_, true);
                     applyEnginePatch (*activeEngine_, preset);
                     scalerFor (activeEngine_).capture (*activeEngine_, storedDampingKnobs (*preset), true);
+                    // As in the swap: the session's own SixAP values over the preset's.
+                    pushSixAPBrightnessTo (*activeEngine_);
+                    activeEngine_->snapSmoothersToTargets();
                 }
             }
             cachedAlgorithm_ = algoIdx;

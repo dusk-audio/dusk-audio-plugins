@@ -922,12 +922,15 @@ void testPortedPresetsKeepTheirSessions()
                 "'%s': a session on the earlier engine gets the row", n.c_str());
     }
     // On the earlier engine the Decay reading of release 1.0.3 applies: at that reading the engines
-    // get the preset row's decay, and the patch is the earlier engine's.
+    // get the preset row's decay. A row whose reading is the row's decay itself (Live Room) says
+    // nothing here, the engines get that value either way.
+    int calibrated = 0;
     for (const auto& row : kLegacyPresetVoicing)
     {
         const FactoryPreset* preset = presetNamed (row.name);
-        if (preset == nullptr || ! (row.shownDecay > 0.0f))
+        if (preset == nullptr || ! (row.shownDecay > 0.0f) || row.shownDecay == preset->decay)
             continue;
+        ++calibrated;
         const auto dsp = recalled (*preset);
         setPlain (*dsp, Algorithm, static_cast<float> (static_cast<int> (row.algorithm)));
         setPlain (*dsp, Decay, row.shownDecay);
@@ -936,6 +939,7 @@ void testPortedPresetsKeepTheirSessions()
         checkf (sameBits (dsp->engineDecay(), want), "%s: on its earlier engine, at the 1.0.3 reading the engines get the row's %.9g s (got %.9g)",
                 preset->name, want, dsp->engineDecay());
     }
+    checkf (calibrated >= 5, "the Decay readings of the earlier engines are checked (%d rows)", calibrated);
     // Release 1.0.3 played Vocal Plate without an engine patch.
     const auto* vocalPlate = legacyPresetVoicingFor ("Vocal Plate", static_cast<int> (EngineType::AccurateHall));
     checkf (vocalPlate != nullptr && vocalPlate->enginePatch == &kNoEnginePatch, "a Vocal Plate session plays without the later engine patch");
