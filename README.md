@@ -92,7 +92,7 @@ Algorithmic reverb with 11 selectable engines and 20 factory presets:
 - 11 engines: Plate, Vintage Plate, Smooth Plate, Chamber, Spring, Gated, Shimmer, Reverse, Hall, Tiled Room, Dense Hall
 - Tone / Character / Duck macro row for one-knob global shaping over any engine
 - Overhauled Shimmer engine: post-loop HF air voice for sparkle plus a down-octave voice for warmth
-- Per-preset tuned engine wrappers with corrective EQ, anchored to classic digital reverb, plate, and nonlinear hardware references
+- Per-preset engine voicing and corrective EQ for digital halls, plates, and nonlinear reverbs
 - Honest Decay knob (position tracks actual tail length), size, pre-delay, damping, modulation, and mix controls
 - Early reflections with configurable patterns
 
