@@ -135,5 +135,10 @@ endif()
 # DuskVerb measurement tool — hosts the AU bundle to render test signals.
 option(BUILD_DUSKVERB_RENDER "Build DuskVerb plugin-host render tool" OFF)
 if(BUILD_DUSKVERB_RENDER)
-    add_subdirectory(tests/duskverb_render)
+    set(DUSK_AUDIO_TOOLS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../dusk-audio-tools" CACHE PATH
+        "Private Dusk Audio tools checkout containing the DuskVerb renderer")
+    if(NOT EXISTS "${DUSK_AUDIO_TOOLS_DIR}/tools/duskverb/render/CMakeLists.txt")
+        message(FATAL_ERROR "BUILD_DUSKVERB_RENDER requires the private tools checkout. Set DUSK_AUDIO_TOOLS_DIR to its location.")
+    endif()
+    add_subdirectory("${DUSK_AUDIO_TOOLS_DIR}/tools/duskverb/render" tests/duskverb_render)
 endif()
