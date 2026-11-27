@@ -2,8 +2,10 @@
 
 Entries for the next release go here, above the released ones. The version number is set when that release is made.
 
+## Released as 1.1.0 on 2026-11-27
+
 - 21 new factory programs in seven families: Rooms II, Chambers II, Vintage Plates, Halls II, Studio Plates, Modulated Halls and Auditoriums. They recall at 35% wet with Bus off; Mix Lock keeps your current Mix and Bus settings. Existing programs keep their numbers.
-- Eight new engines in the Algorithm menu: Room, Chamber II, Vintage Plate II, Hall II, Compact Plate, Studio Plate, Modulated Hall and Auditorium.
+- Eight new engines in the Engine menu: Room, Chamber II, Vintage Plate II, Hall II, Compact Plate, Studio Plate, Modulated Hall and Auditorium.
 - Ten factory presets now play on the new engines. Live Room, Reverse Taps, Medium Drum Room, Tiled Room and Vocal Hall use Room; Large Chamber uses Chamber II; Vintage Vocal Plate and Vintage Gold Plate use Vintage Plate II; Cathedral Large Hall uses Hall II; Vocal Plate uses Compact Plate. At their factory settings Reverse Taps plays about 2.4 dB louder than in 1.0.3, Vocal Hall about 1.3 dB and Cathedral Large Hall about 0.8 dB; the others are within 0.5 dB.
 - Vocal Plate on Compact Plate: its bass builds later on kick drums, with less emphasis around 73 Hz. Vocal Hall on Room: close early reflections and a 2.83 s midrange decay. Live Room places 62% of its impulse energy between 20 and 50 ms, with opposite polarity on the two sides, so much of the opening bass cancels in mono. Large Chamber brings its tail in sooner after a hit and keeps more high-frequency detail.
 - Small Drum Room is retuned on its engine. Its early reflections sit between 5 and 17 ms, with faint repeats near 70, 100 and 155 ms. Hi Cut moves from 3.6 to 6.0 kHz and the top end rolls off above 14 kHz. The mid decay multiplier rises from 1.22 to 1.40, Width goes from 114% to 105%, and the output trim falls by 1.1 dB.
