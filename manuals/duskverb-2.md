@@ -1,8 +1,8 @@
 ---
 slug: duskverb-2
 title: DuskVerb 2
-version: 1.0.3
-last_updated: 2026-11-24
+version: 1.1.0
+last_updated: 2026-11-27
 tagline: Algorithmic reverb with 45 factory sounds
 ---
 
