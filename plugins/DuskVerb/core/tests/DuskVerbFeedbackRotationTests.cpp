@@ -21,6 +21,7 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <vector>
 
 namespace
@@ -97,6 +98,15 @@ double t60 (const Stereo& x)
     }
     const double slope = (count * sxy - sx * sy) / (count * sxx - sx * sx);
     return -60.0 / slope;
+}
+
+// By the bits: these tests build with the engines' flags, under which the compiler may assume
+// that every float is a number.
+bool finiteBits (float v) noexcept
+{
+    std::uint32_t bits;
+    std::memcpy (&bits, &v, sizeof (bits));
+    return (bits & 0x7f800000u) != 0x7f800000u;
 }
 
 bool identical (const Stereo& a, const Stereo& b)
@@ -213,6 +223,7 @@ void checkRotatingBlockSizes()
     }
     float inL[frames], inR[frames], longL[frames], longR[frames], shortL[frames], shortR[frames];
     float error = 0.0f, peak = 0.0f;
+    bool allFinite = true;
     uint32_t seed = 37;
     for (int block = 0; block < 600; ++block)
     {
@@ -238,11 +249,13 @@ void checkRotatingBlockSizes()
             shortBlocks.process (inL + i, inR + i, shortL + i, shortR + i, std::min (17, frames - i));
         for (int i = 0; i < frames; ++i)
         {
+            allFinite = allFinite && finiteBits (longL[i]) && finiteBits (longR[i]) && finiteBits (shortL[i]) && finiteBits (shortR[i]);
             error = std::max ({error, std::fabs (longL[i] - shortL[i]), std::fabs (longR[i] - shortR[i])});
             peak = std::max ({peak, std::fabs (shortL[i]), std::fabs (shortR[i])});
         }
     }
     std::printf ("Rotating tank 133 vs 17 samples: peak %.8g, maximum difference %.8g\n", peak, error);
+    checkf (allFinite, "rotating tank: every sample of both renders is finite");
     checkf (peak > 0.01f && error < 0.001f * peak, "rotating tank output depends on block length");
 }
 
@@ -257,6 +270,7 @@ void checkDampingHistory()
             0.70f, 0.55f + 0.01f * i, 0.985f, 0.93f, 0.66f, 0.33f, kSr);
 
     float maxError = 0.0f;
+    bool historyFinite = true;
     for (int n = 0; n < 128; ++n)
     {
         if (n == 29) bank.load (switching, coeffs);
@@ -269,8 +283,13 @@ void checkDampingHistory()
         else
             for (int i = 0; i < lines; ++i) actual[i] = switching[i].process (input[i], coeffs[i]);
         for (int i = 0; i < lines; ++i)
-            maxError = std::max (maxError, std::abs (actual[i] - scalar[i].process (input[i], coeffs[i])));
+        {
+            const float reference = scalar[i].process (input[i], coeffs[i]);
+            historyFinite = historyFinite && finiteBits (actual[i]) && finiteBits (reference);
+            maxError = std::max (maxError, std::abs (actual[i] - reference));
+        }
     }
+    checkf (historyFinite, "damping history: every sample is finite");
     std::printf ("Damping history maximum sample error %.9g\n", maxError);
     checkf (maxError < 1.0e-5f, "parallel damping lost the scalar filter history");
 }
