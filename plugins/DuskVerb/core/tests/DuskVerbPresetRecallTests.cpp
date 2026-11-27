@@ -235,8 +235,13 @@ void testEngineDecay()
         }
 
         // Another engine hears Decay as it reads; back on its own engine the calibration returns.
+        // Not the engine the preset played before it moved either: a session there is calibrated.
+        const auto earlierEngine = [preset] (int algorithm) {
+            const auto* legacy = legacyPresetVoicingFor (preset->name, algorithm);
+            return legacy != nullptr && static_cast<int> (legacy->algorithm) == resolveAlgorithm (algorithm);
+        };
         int other = 0;
-        while (resolveAlgorithm (other) == resolveAlgorithm (preset->algorithm) || isOwnAlgorithm (other))
+        while (resolveAlgorithm (other) == resolveAlgorithm (preset->algorithm) || isOwnAlgorithm (other) || earlierEngine (other))
             ++other;
         setPlain (*dsp, Decay, shown);
         setPlain (*dsp, Algorithm, static_cast<float> (other));
@@ -865,6 +870,33 @@ void testBigDrumRoomRecall()
 
 } // namespace
 
+// A shared preset that moved to one of DuskVerb 2's own engines must keep a row for the sessions
+// saved on its earlier engine, and that row must apply there and only there.
+void testPortedPresetsKeepTheirSessions()
+{
+    for (const auto& [name, algorithm] : kOwnEngineByName)
+    {
+        const LegacyPresetVoicing* row = nullptr;
+        for (const auto& candidate : kLegacyPresetVoicing)
+            if (candidate.name == name)
+                row = &candidate;
+        const std::string n (name);
+        checkf (row != nullptr, "'%s' moved engines and keeps a row for its earlier sessions", n.c_str());
+        if (row == nullptr)
+            continue;
+        checkf (row->portedAlgorithm == algorithm, "'%s': the row names the engine the preset moved to", n.c_str());
+        checkf (legacyPresetVoicingFor (name, algorithm) == nullptr, "'%s': on its new engine the row is not used", n.c_str());
+        checkf (legacyPresetVoicingFor (name, static_cast<int> (row->algorithm)) == row,
+                "'%s': a session on the earlier engine gets the row", n.c_str());
+    }
+    // Release 1.0.3 played Vocal Plate without an engine patch; its present row came later.
+    const auto* vocalPlate = legacyPresetVoicingFor ("Vocal Plate", static_cast<int> (EngineType::AccurateHall));
+    checkf (vocalPlate != nullptr && vocalPlate->enginePatch == &kNoEnginePatch, "a Vocal Plate session plays without the later engine patch");
+    const auto* vintage = legacyPresetVoicingFor ("Vintage Vocal Plate", static_cast<int> (EngineType::DattorroVintage));
+    checkf (vintage != nullptr && vintage->enginePatch != nullptr && vintage->tankTreble != nullptr
+            && vintage->tankTreble->hz == 10800.0f, "a Vintage Vocal Plate session keeps its patch and its fourth tank band");
+}
+
 int main()
 {
     const char* const additions[] {
@@ -897,6 +929,7 @@ int main()
     testBlackHoleWetInput();
     testNeutralPmbReset();
     testBigDrumRoomRecall();
+    testPortedPresetsKeepTheirSessions();
     if (failures != 0)
     {
         std::printf ("%d failure(s)\n", failures);

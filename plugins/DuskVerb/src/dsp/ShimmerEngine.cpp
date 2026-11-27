@@ -38,7 +38,13 @@ void ShimmerEngine::GranularPitchShifter::prepare (double sampleRate, float hist
     timedGrainSize_ = timedWindow ? static_cast<int> (timedWindow->size()) : kGrainSize;
     selectGrainWindow();
     const int maxGrain = std::max (kGrainSize, timedGrainSize_);
+#if defined(DUSKVERB2_OPTIMIZED_DSP)
     const int capacity = DspUtils::nextPowerOf2 (std::max (kLegacyCapacity, historySamples_ + 4 * maxGrain));
+#else
+    // The original plug-in never plays the timed history: keep its buffer size.
+    (void) maxGrain;
+    const int capacity = kLegacyCapacity;
+#endif
     buffer_.assign (static_cast<size_t> (capacity), 0.0f);
     mask_ = (timedHistory_ ? capacity : kLegacyCapacity) - 1;
     clear();

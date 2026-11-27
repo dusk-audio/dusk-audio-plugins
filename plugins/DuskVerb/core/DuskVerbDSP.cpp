@@ -957,7 +957,16 @@ const StereoBands::Gains& DuskVerbDSP::stereoBandsFor (const FactoryPreset* pres
 {
     if (preset == nullptr)
         return StereoBands::kOff;      // no preset identity: no stage, like the field and the trim
-    return hasStereoBandsOverride_ ? stereoBandsOverride_ : enginePatchFor (preset->name).stereoBands;
+    return hasStereoBandsOverride_ ? stereoBandsOverride_ : enginePatchOf (preset).stereoBands;
+}
+
+const EnginePatch& DuskVerbDSP::enginePatchOf (const FactoryPreset* preset) const noexcept
+{
+    if (preset == nullptr)
+        return kNoEnginePatch;
+    if (const auto* legacy = legacyPresetVoicingFor (preset->name, algorithm()); legacy != nullptr && legacy->enginePatch != nullptr)
+        return *legacy->enginePatch;
+    return enginePatchFor (preset->name);
 }
 
 void DuskVerbDSP::applyEnginePatch (DuskVerbEngine& engine, const FactoryPreset* preset) noexcept
@@ -974,16 +983,26 @@ void DuskVerbDSP::applyEnginePatch (DuskVerbEngine& engine, const FactoryPreset*
     // Gain automation uses the same band centre and Q as prepare and preset recall.
     const bool sweptEq = resolvePteqFreqQ (preset ? preset->name : "", pteqBandFreq_, pteqBandQ_);
     if (preset && !sweptEq)
-        for (const auto& band : kTankTrebleEq)
-            if (band.name == preset->name)
-            {
-                pteqBandFreq_[3] = band.hz;
-                pteqBandQ_[3] = band.q;
-                engine.setPostTankEQBand (3, band.hz, band.q, band.gainDb);
-                break;
-            }
+    {
+        const TankTrebleEq* treble = nullptr;
+        if (const auto* legacy = legacyPresetVoicingFor (preset->name, algorithm()); legacy != nullptr && legacy->tankTreble != nullptr)
+            treble = legacy->tankTreble;
+        else
+            for (const auto& band : kTankTrebleEq)
+                if (band.name == preset->name)
+                {
+                    treble = &band;
+                    break;
+                }
+        if (treble != nullptr)
+        {
+            pteqBandFreq_[3] = treble->hz;
+            pteqBandQ_[3] = treble->q;
+            engine.setPostTankEQBand (3, treble->hz, treble->q, treble->gainDb);
+        }
+    }
 
-    const EnginePatch& patch = preset != nullptr ? enginePatchFor (preset->name) : kNoEnginePatch;
+    const EnginePatch& patch = enginePatchOf (preset);
     if (patch.tankDelayMs > 0.0f)
         applyTankOnsetDelay (engine, patch.tankDelayMs);
     const bool side = preset != nullptr && pmbSideOverride_ >= 0 ? pmbSideOverride_ == 1 : patch.pmbDecorrelatedSide;

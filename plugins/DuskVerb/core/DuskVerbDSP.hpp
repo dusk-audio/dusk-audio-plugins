@@ -69,6 +69,7 @@ namespace duskverb
 {
 
 struct SectionReverbRow;   // DuskVerbDv2Voicing.hpp
+struct EnginePatch;        // DuskVerbDv2Voicing.hpp
 
 // The optional room variant belongs to the recalled sound across prepare and reset.
 enum class RoomVoicing : unsigned char { Factory, EarlyStudy, Matched };
@@ -265,6 +266,9 @@ private:
     const BandLimitSetting& bandLimitSettingFor (const FactoryPreset* preset) const noexcept;
     // The band width stage's gains for `preset`: the hook's, the patch's, or off.
     const StereoBands::Gains& stereoBandsFor (const FactoryPreset* preset) const noexcept;
+    // The engine patch the preset plays on the current algorithm: a session saved on the
+    // preset's earlier engine keeps that engine's patch.
+    const EnginePatch& enginePatchOf (const FactoryPreset* preset) const noexcept;
     void installEarlyField (const DuskVerbEngine* engine, const FactoryPreset* preset,
                             const DuskVerbEngine* outgoing) noexcept;
     // Takes `preset`'s Decay calibration for engineDecay() (nullptr, or a preset without one: none).

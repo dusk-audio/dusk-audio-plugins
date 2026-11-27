@@ -542,57 +542,6 @@ inline const OctaveTrimGains& octaveTrimFor (std::string_view name) noexcept
     return kFlatOctaveTrim;
 }
 
-// Sessions save the algorithm and parameter values alongside the factory name.
-// Ported presets retain the early field, output EQ and decay calibration of their previous engines.
-struct LegacyPresetVoicing
-{
-    std::string_view name;
-    int portedAlgorithm;
-    EngineType algorithm;
-    float shownDecay;  // zero when the original engine followed the knob directly
-    EarlyFieldConfig earlyField;
-    OctaveTrimGains octaveTrim;
-};
-inline constexpr LegacyPresetVoicing kLegacyPresetVoicing[] {
-    { "Vocal Plate", kCompactPlateAlgorithm, EngineType::AccurateHall, 0.73f,
-      { true, 16.104126f, 33.4986496f, 31, 15.3803778f, 8.20212746f, 0.317118138f, -13.7928858f, -11.1442814f, 3, { 45.5f, 61.0f, 73.8000031f, 82.5999985f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }, 13705.5713f, -120.0f, 0.0f, 4.0f, 12000.0f, -120.0f, 15.0f, 30.0f, 2.0f, 250.0f, { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }, 0.0f, -9.0f, 300.0f },
-      {{ -1.8f, 3.0f, 3.0f, -2.29f, 0.07f, -1.43f, -0.62f, -0.57f, -2.72f }} },
-    { "Cathedral Large Hall", kSectionHallAlgorithm, EngineType::DenseHall, 3.37f,
-      { true, 5.31908464f, 64.9212952f, 9, 25.4141865f, 6.62954283f, 0.110564433f, -33.2627449f, -25.7314243f, 1, { 75.8000031f, 89.1999969f, 100.400002f, 120.400002f }, 3043.54565f }, kFlatOctaveTrim },
-    { "Vocal Hall", kRoomAlgorithm, EngineType::ParallelMultiband, 3.64f,
-      { true, 17.5882149f, 126.435921f, 34, -9.35655785f, 16.4620075f, 0.183764786f, -40.6726379f, -42.1176491f, 0, { 42.5999985f, 66.1999969f, 121.199997f, 133.600006f }, 9869.50977f },
-      {{ -0.3929f, -0.3537f, -2.5837f, -0.588f, -0.8468f, -2.499f, 0.1842f, -2.5404f, -2.462f }} },
-    { "Medium Drum Room", kRoomAlgorithm, EngineType::ParallelMultiband, 0.78f,
-      { true, 15.3603783f, 269.405121f, 37, -13.6343489f, 25.6628685f, 0.114372894f, -49.5636711f, -44.9116936f, 2, { 40.0f, 51.2000008f, 92.1999969f, 191.800003f }, 2712.16797f },
-      {{ -0.298f, -0.982f, -1.917f, -1.799f, -1.011f, -0.531f, 1.716f, 0.614f, -2.985f }} },
-    { "Tiled Room", kRoomAlgorithm, EngineType::TiledRoom, 0.0f,
-      { true, 31.1826839f, 60.6504745f, 18, 8.46437454f, 17.4806652f, 0.0751035661f, -33.7343483f, -9.97643089f, 0, { 31.5f, 55.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }, 7302.31396f },
-      {{ 2.96405005f, -0.11537648f, -1.23354101f, 0.0184728466f, 0.38636291f, 0.236264035f, -0.0842026472f, 1.81604993f, 1.36784935f }} },
-};
-
-constexpr bool legacyPresetVoicingValid() noexcept
-{
-    for (size_t i = 0; i < std::size (kLegacyPresetVoicing); ++i)
-    {
-        const auto& row = kLegacyPresetVoicing[i];
-        if (row.name.empty() || ! EarlyField::valid (row.earlyField) || ! OctaveTrim::valid (row.octaveTrim))
-            return false;
-        for (size_t j = 0; j < i; ++j)
-            if (kLegacyPresetVoicing[j].name == row.name)
-                return false;
-    }
-    return true;
-}
-static_assert (legacyPresetVoicingValid(), "legacy voicing requires unique preset names and valid early fields and trims");
-
-inline const LegacyPresetVoicing* legacyPresetVoicingFor (std::string_view name, int algorithm) noexcept
-{
-    for (const auto& row : kLegacyPresetVoicing)
-        if (row.name == name && algorithm != row.portedAlgorithm)
-            return &row;
-    return nullptr;
-}
-
 // Parses the octave-trim hook's text into `out`: nine plain numbers, comma-separated, the bands'
 // dB from 63 Hz up. Returns false, leaving `out` alone, on any other count, a value that is not a
 // plain number, or one outside OctaveTrim's range; `error`, when given, then says which.
@@ -1059,6 +1008,83 @@ inline const EnginePatch& enginePatchFor (std::string_view name) noexcept
         if (row.first == name)
             return row.second;
     return kNoEnginePatch;
+}
+
+// Sessions save the algorithm and parameter values alongside the factory name. A preset that has
+// moved to another engine keeps, for a session saved on the earlier one, what it played there: the
+// early field, output EQ and decay calibration, and where they differ from the preset's current
+// rows the engine patch and the fourth tank band. The values are those of release 1.0.3.
+struct LegacyPresetVoicing
+{
+    std::string_view name;
+    int portedAlgorithm;
+    EngineType algorithm;
+    float shownDecay;  // zero when the original engine followed the knob directly
+    EarlyFieldConfig earlyField;
+    OctaveTrimGains octaveTrim;
+    const EnginePatch* enginePatch = nullptr;    // unset: the preset's current row
+    const TankTrebleEq* tankTreble = nullptr;    // unset: the preset's current row
+};
+inline constexpr EnginePatch kLegacyLiveRoomPatch { false, { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }, { 40.0f, 2.5f }, { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }, -1.0f, { 0.533333f, 0.533333f, 0.666667f } };
+inline constexpr EnginePatch kLegacyVintageVocalPlatePatch { false, { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f }, { 1.15f, 1.0f, 0.85f, 1.0f, 1.0f, 1.15f, 1.0f, 1.0f, 1.0f } };
+inline constexpr TankTrebleEq kLegacyVintageVocalPlateTreble { "Vintage Vocal Plate", 10800.0f, 2.2f, -1.7f };
+inline constexpr LegacyPresetVoicing kLegacyPresetVoicing[] {
+    { "Vocal Plate", kCompactPlateAlgorithm, EngineType::AccurateHall, 0.73f,
+      { true, 16.104126f, 33.4986496f, 31, 15.3803778f, 8.20212746f, 0.317118138f, -13.7928858f, -11.1442814f, 3, { 45.5f, 61.0f, 73.8000031f, 82.5999985f }, 13705.5713f },
+      {{ -2.7255f, 2.4827f, 2.1602f, 0.3244f, 1.3887f, 1.7572f, 2.3243f, -1.7645f, -1.6393f }}, &kNoEnginePatch },
+    { "Vintage Vocal Plate", kSectionPlateAlgorithm, EngineType::DattorroVintage, 0.78f,
+      { true, 13.057683f, 43.1177406f, 19, 6.80627155f, 32.5891571f, 0.139030248f, -51.124691f, -42.8224068f, 1, { 114.300003f, 125.800003f, 154.600006f, 0.0f }, 8124.59082f },
+      {{ -0.785391271f, -0.0869825855f, 1.26347637f, 0.367175251f, 2.13951373f, -0.3122679f, -1.34776425f, -1.06126356f, 0.296430409f }}, &kLegacyVintageVocalPlatePatch, &kLegacyVintageVocalPlateTreble },
+    { "Vintage Gold Plate", kSectionPlateAlgorithm, EngineType::Dattorro, 1.79f,
+      { true, 27.4996796f, 27.0168591f, 19, -13.9333677f, 36.6331558f, 0.47833398f, -48.1144867f, -13.3144732f, 0, { 0.0f, 0.0f, 0.0f, 0.0f }, 5850.14111f, -36.0f, 28.87f, 5.3f, 10028.0f },
+      {{ 1.00932944f, -1.89307177f, -0.025091961f, 0.958136261f, -1.1617521f, 2.40072703f, -2.73682666f, -2.15866685f, -1.0f }} },
+    { "Large Chamber", kChamberAlgorithm, EngineType::DenseHall, 2.82f,
+      { true, 8.71381283f, 37.679245f, 16, 19.2764759f, 4.1543417f, 0.121218048f, -22.8722038f, -20.4045582f, 3, { 53.4000015f, 81.9000015f, 104.800003f, 142.199997f }, 7576.125f },
+      {{ 2.29713774f, 1.2263025f, -0.649435639f, 0.620101988f, 1.91332257f, 1.03331375f, -1.48754799f, 2.62679315f, -0.555481493f }} },
+    { "Live Room", kRoomAlgorithm, EngineType::Dattorro, 0.66f,
+      { true, 0.0f, 50.0f, 16, 0.0f, 0.0f, 0.0f, -120.0f, -120.0f, 0, { 0.0f, 0.0f, 0.0f, 0.0f }, 8000.0f, -120.0f, 0.0f, 4.0f, 12000.0f, -7.0f, 17.0f, 30.0f, 2.0f, 250.0f },
+      {{ 0.622846842f, -0.463719219f, 0.588961184f, 0.452516139f, 0.18761763f, -0.888634801f, -0.827028215f, 0.209748209f, 0.830334663f }}, &kLegacyLiveRoomPatch },
+    { "Reverse Taps", kRoomAlgorithm, EngineType::ReverseRoom, 0.0f,
+      {},
+      {{ 0.316647798f, 2.20800257f, 2.27045536f, 2.24588609f, 0.484986275f, 0.368917704f, -0.371552557f, 1.25592148f, -1.37708199f }} },
+    { "Cathedral Large Hall", kSectionHallAlgorithm, EngineType::DenseHall, 3.37f,
+      { true, 5.31908464f, 64.9212952f, 9, 25.4141865f, 6.62954283f, 0.110564433f, -33.2627449f, -25.7314243f, 1, { 75.8000031f, 89.1999969f, 100.400002f, 120.400002f }, 3043.54565f }, kFlatOctaveTrim },
+    { "Vocal Hall", kRoomAlgorithm, EngineType::ParallelMultiband, 3.64f,
+      { true, 17.5882149f, 126.435921f, 34, -9.35655785f, 16.4620075f, 0.183764786f, -40.6726379f, -42.1176491f, 0, { 42.5999985f, 66.1999969f, 121.199997f, 133.600006f }, 9869.50977f },
+      {{ -0.3929f, -0.3537f, -2.5837f, -0.588f, -0.8468f, -2.499f, 0.1842f, -2.5404f, -2.462f }} },
+    { "Medium Drum Room", kRoomAlgorithm, EngineType::ParallelMultiband, 0.78f,
+      { true, 15.3603783f, 269.405121f, 37, -13.6343489f, 25.6628685f, 0.114372894f, -49.5636711f, -44.9116936f, 2, { 40.0f, 51.2000008f, 92.1999969f, 191.800003f }, 2712.16797f },
+      {{ -0.298f, -0.982f, -1.917f, -1.799f, -1.011f, -0.531f, 1.716f, 0.614f, -2.985f }} },
+    { "Tiled Room", kRoomAlgorithm, EngineType::TiledRoom, 0.0f,
+      { true, 31.1826839f, 60.6504745f, 18, 8.46437454f, 17.4806652f, 0.0751035661f, -33.7343483f, -9.97643089f, 0, { 31.5f, 55.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }, 7302.31396f },
+      {{ 2.96405005f, -0.11537648f, -1.23354101f, 0.0184728466f, 0.38636291f, 0.236264035f, -0.0842026472f, 1.81604993f, 1.36784935f }} },
+};
+
+constexpr bool legacyPresetVoicingValid() noexcept
+{
+    for (size_t i = 0; i < std::size (kLegacyPresetVoicing); ++i)
+    {
+        const auto& row = kLegacyPresetVoicing[i];
+        if (row.name.empty() || ! EarlyField::valid (row.earlyField) || ! OctaveTrim::valid (row.octaveTrim))
+            return false;
+        for (size_t j = 0; j < i; ++j)
+            if (kLegacyPresetVoicing[j].name == row.name)
+                return false;
+    }
+    return true;
+}
+static_assert (legacyPresetVoicingValid(), "legacy voicing requires unique preset names and valid early fields and trims");
+
+// The row for preset `name` on `algorithm`, or none. Only an algorithm release 1.0.3 had can come
+// from one of its sessions: on the engines added since, a preset plays its current rows.
+inline const LegacyPresetVoicing* legacyPresetVoicingFor (std::string_view name, int algorithm) noexcept
+{
+    if (algorithm > kNonLinAlgorithm)
+        return nullptr;
+    for (const auto& row : kLegacyPresetVoicing)
+        if (row.name == name && algorithm != row.portedAlgorithm)
+            return &row;
+    return nullptr;
 }
 
 } // namespace duskverb
