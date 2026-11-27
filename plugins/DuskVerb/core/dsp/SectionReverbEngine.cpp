@@ -2320,7 +2320,7 @@ void SectionReverbEngine::tailBlock() noexcept
                 case Action::Swap: swapMorph(x); break;
                 case Action::FadeOut: x.morphRamp.arm(0.0f, 200.0f, rate_); break;
                 case Action::Finish: x.morphB = x.morphA; break;
-                case Action::None: break;
+                case Action::Unchanged: break;
             }
         }
         else

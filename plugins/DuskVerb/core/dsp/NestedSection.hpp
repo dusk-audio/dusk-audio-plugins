@@ -12,9 +12,10 @@ namespace duskverb::sectionreverb
 class NestedSection
 {
   public:
+    // "Unchanged", not "None": X11 defines None as a macro, and the editor test includes both.
     enum class MorphAction
     {
-        None,
+        Unchanged,
         Step,
         FadeOut,
         Swap,
@@ -48,7 +49,7 @@ class NestedSection
         if (state_ != 0)
         {
             pending_ = true;
-            return MorphAction::None;
+            return MorphAction::Unchanged;
         }
         pending_ = false;
         setTargets(sizeScale);
@@ -66,7 +67,7 @@ class NestedSection
             state_ = 9;
             random_ = longEnabled_ = false;
         }
-        return MorphAction::None;
+        return MorphAction::Unchanged;
     }
 
     // Called after the morph read and the 32-sample write advance.
@@ -114,7 +115,7 @@ class NestedSection
         default:
             break; // waiting for a matching sequencer group
         }
-        return MorphAction::None;
+        return MorphAction::Unchanged;
     }
 
     unsigned shortGroup() const { return shortGroup_; }
