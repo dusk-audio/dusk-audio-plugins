@@ -600,7 +600,8 @@ bool sameConfig (const EarlyFieldConfig& a, const EarlyFieldConfig& b)
         && a.burstLowpassHz == b.burstLowpassHz && a.sideDb == b.sideDb && a.sideStartMs == b.sideStartMs
         && a.sideMs == b.sideMs && a.sideAttackMs == b.sideAttackMs && a.sideLowpassHz == b.sideLowpassHz
         && a.reflTrimDb == b.reflTrimDb && a.sideOffsetMs == b.sideOffsetMs && a.shelfDb == b.shelfDb
-        && a.shelfHz == b.shelfHz && a.sidesOpposed == b.sidesOpposed;
+        && a.shelfHz == b.shelfHz && a.sidesOpposed == b.sidesOpposed && a.invertedTapSamples == b.invertedTapSamples
+        && a.reversedReflections == b.reversedReflections;
 }
 
 // sidesOpposed: the taps sit where they sat and are as loud, every one negative on the left and
@@ -955,6 +956,8 @@ void testParser()
     odd.shelfHz = 233.3f;
     odd.reflTrimDb = { 1.5f, -3.3f, 0.0f, -59.9f };
     odd.sidesOpposed = true;
+    odd.invertedTapSamples = 16;
+    odd.reversedReflections = 7;
     EarlyFieldConfig levers;
     checkf (parseEarlyFieldConfig ("side_offset_ms=2.65,shelf_db=-9,shelf_hz=250,refl_count=2,refl_db=-24,refl_trim_db=3/-6", levers,
                                    error, sizeof (error))
@@ -963,7 +966,7 @@ void testParser()
             "the side offset, the shelf or the reflection trims are refused or misread: %s", error);
     for (const EarlyFieldConfig& original : { longConfig(), odd, EarlyFieldConfig {} })
     {
-        char text[512];
+        char text[1024];
         duskverb::formatEarlyFieldConfig (original, text, sizeof (text));
         EarlyFieldConfig back;
         checkf (parseEarlyFieldConfig (text, back, error, sizeof (error)) && sameConfig (back, original),

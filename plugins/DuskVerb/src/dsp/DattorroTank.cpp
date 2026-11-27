@@ -209,7 +209,7 @@ void DattorroTank::prepare (double sampleRate, int /*maxBlockSize*/)
             // wander on each density-AP delay line — enough to spread
             // 28-30 ms comb teeth on the worst-case plates while keeping
             // the residual pitch wobble inaudible on sustained content
-            // (3 % was perceptible as chorus on Rich Plate).
+            // (3 % was perceptible as chorus on a sustained plate tail).
             tank.densityAP[i].jitterDepthFraction = densityJitterFraction_;
         }
 

@@ -1,6 +1,6 @@
 // Copyright (C) 2026 Dusk Audio, GNU GPL v3.0 or later (see repository LICENSE).
 //
-// SectionReverbEngine, for each model (the room, reversed too, the chamber and the vintage plate):
+// SectionReverbEngine, for each model, including the room with reversed reflections:
 // renders repeat exactly, in place renders as separate buffers do, silence stays silence, a
 // reconfiguration with the same values changes nothing, configure/clear/process never allocate (a
 // change of model and the whole Size range included), a moved delay layout (Size, the pre-delays,
@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <new>
 #include <vector>
 
@@ -105,6 +106,16 @@ SectionReverbConfig testPlate()
     return c;
 }
 
+// Exercise all four Hall reflection routes, including the two cross-channel taps.
+SectionReverbConfig testHall()
+{
+    auto c = testChamber();
+    c.model = static_cast<int> (SectionReverbModel::Hall);
+    c.reflections[2] = { 81.0f, 0, -6.5f };
+    c.reflections[3] = { 91.0f, 0, -6.5f };
+    return c;
+}
+
 // The Reverse Taps configuration: the room's early pattern back to front, no tail.
 SectionReverbConfig testReverseRoom()
 {
@@ -116,7 +127,10 @@ SectionReverbConfig testReverseRoom()
 
 struct Model { const char* name; SectionReverbConfig (*config)(); };
 const Model kModels[] = { { "room", testRoom }, { "reversed room", testReverseRoom }, { "chamber", testChamber },
-                          { "vintage plate", testPlate } };
+                          { "vintage plate", testPlate }, { "hall", testHall },
+                          { "studio plate", [] { auto c = testPlate(); c.model = int(SectionReverbModel::StudioPlate); return c; } },
+                          { "modulated hall", [] { auto c = testHall(); c.model = int(SectionReverbModel::ModulatedHall); return c; } },
+                          { "auditorium", [] { auto c = testHall(); c.model = int(SectionReverbModel::Auditorium); return c; } } };
 
 void prepareWith (SectionReverbEngine& e, const SectionReverbConfig& c)
 {
@@ -154,6 +168,36 @@ Stereo render (SectionReverbEngine& e, const Stereo& in)
     Stereo out { std::vector<float> (in.l.size()), std::vector<float> (in.r.size()) };
     run (e, in, out, 0, static_cast<int> (in.l.size()));
     return out;
+}
+
+// In the Room feed, scale 1.8 at 48 kHz gives 86.39999 samples/ms.
+// A 5 ms pre-delay therefore moves the first tank arrival by 431 samples.
+void roomFeedDelayInSamples()
+{
+    const auto onset = [] (float feedMs) {
+        auto c = testRoom();
+        c.roomScale = 1.8f;
+        c.reverbPredelayMs = feedMs;
+        c.earlyLevelDb = -96.0f;       // taps alone stay below the onset threshold
+        c.reverbLevelDb = 0.0f;
+        c.spinHz = 0.0f;
+        SectionReverbEngine e;
+        prepareWith (e, c);
+        float silence[256] {}, left[256], right[256];
+        for (int i = 0; i < 375; ++i)
+            e.process (silence, silence, left, right, 256);
+        Stereo impulse { std::vector<float> (4800), std::vector<float> (4800) };
+        impulse.l[0] = impulse.r[0] = 1.0f;
+        const auto out = render (e, impulse);
+        for (int i = 0; i < 4800; ++i)
+            if (std::max (std::abs (out.l[i]), std::abs (out.r[i])) > 1.0e-4f)
+                return i;
+        return -1;
+    };
+    const int dryFeed = onset (0.0f), delayedFeed = onset (5.0f);
+    std::printf ("Room feed arrivals at 0 and 5 ms: samples %d and %d\n", dryFeed, delayedFeed);
+    checkf (dryFeed >= 0 && delayedFeed - dryFeed == 431,
+            "a 5 ms Room feed at scale 1.8 should add 431 samples (arrivals %d and %d)", dryFeed, delayedFeed);
 }
 
 double rms (const std::vector<float>& x, std::size_t from, std::size_t to)
@@ -226,6 +270,23 @@ void inPlaceMatchesSeparate (const Model& m)
         checkf (separate.l == aliased.l && separate.r == aliased.r, "%s, block %d: in place renders differently from separate buffers",
                 m.name, block);
     }
+}
+
+// Hall II limits input to +/-4 and treats a NaN as zero before it reaches the loop.
+void hallInputLimit()
+{
+    SectionReverbEngine a, b;
+    prepareWith (a, testHall());
+    prepareWith (b, testHall());
+    Stereo input = noise (48000, 43);
+    Stereo limited = input;
+    input.l[0] = std::numeric_limits<float>::quiet_NaN();
+    limited.l[0] = 0.0f;
+    input.l[17] = 8.0f; limited.l[17] = 4.0f;
+    input.r[73] = -7.0f; limited.r[73] = -4.0f;
+    const Stereo actual = render (a, input), expected = render (b, limited);
+    checkf (rms (expected.l, 24000, 48000) > 1.0e-4 && actual.l == expected.l && actual.r == expected.r,
+            "Hall input above +/-4 or a NaN did not render as its limited input");
 }
 
 void neverAllocates()
@@ -406,6 +467,32 @@ void cornersStayFiniteAndDecay (const Model& m)
 }
 } // namespace
 
+static void queuedHallSizeChanges()
+{
+    using Section = duskverb::sectionreverb::NestedSection;
+    for (unsigned group = 0; group < 4; ++group)
+    {
+        Section section;
+        section.reset (group, 32, 10, 0, 4096);
+        section.requestSize (8);
+        section.requestSize (12);
+        int fades = 0, finishes = 0, wander = 0;
+        for (unsigned i = 0; i < 256; ++i)
+        {
+            section.retarget (i % 4, 10, (32 * i) % 4096, 4096, 2048, [&] {
+                if (finishes == 2) ++wander;
+                return 0.5f;
+            });
+            const auto action = section.advanceSize (false);
+            fades += action == Section::MorphAction::FadeOut;
+            finishes += action == Section::MorphAction::Finish;
+        }
+        checkf (finishes == 2 && fades == 2 && section.sizeScale() == 12 && wander > 0,
+                "nested group %u: finishes %d, fades %d, size %.0f, wander calls %d",
+                group, finishes, fades, section.sizeScale(), wander);
+    }
+}
+
 int main()
 {
     // As the plugin runs the engine (DuskVerbDSP::process).
@@ -418,6 +505,9 @@ int main()
         latencyIsFixed (m);
         cornersStayFiniteAndDecay (m);
     }
+    queuedHallSizeChanges();
+    hallInputLimit();
+    roomFeedDelayInSamples();
     neverAllocates();
     layoutChangesFade();
     if (failures == 0)

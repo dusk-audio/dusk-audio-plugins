@@ -389,6 +389,23 @@ void addContiguousTap (const float* __restrict__ samples, float* __restrict__ ou
     }
 }
 #define DUSK_QUAD_CONTIGUOUS_TAP 1
+#elif defined(DUSKVERB2_OPTIMIZED_DSP) && defined(__clang__) && defined(__aarch64__) && defined(__FAST_MATH__)
+// Keep the scalar ARM64 cubic's rounding points while reading adjacent output
+// frames together. Only independent frames are vectorized, never the tap sum.
+void addContiguousTap (const float* __restrict__ samples, float* __restrict__ out, int count, float frac, float gain)
+{
+#pragma clang fp reassociate(off) contract(off)
+    for (int i = 0; i < count; ++i)
+    {
+        const float a = samples[i], b = samples[i + 1], c = samples[i + 2], d = samples[i + 3];
+        const float linear = 0.5f * (c - a);
+        const float quadratic = std::fma (-0.5f, d, std::fma (-2.5f, b, a) + (c + c));
+        const float cubic = std::fma (0.5f, d - a, 1.5f * (b - c));
+        const float value = std::fma (std::fma (std::fma (cubic, frac, quadratic), frac, linear), frac, b);
+        out[i] = std::fma (gain, value, out[i]);
+    }
+}
+#define DUSK_QUAD_CONTIGUOUS_TAP 1
 #elif !defined(__FAST_MATH__) && !defined(_MSC_VER)
 void addContiguousTap (const float* samples, float* out, int count, float frac, float gain)
 {
@@ -768,7 +785,7 @@ void QuadTank::updateDelayLengths()
             tank.densityAP[i].updateJitterDepth (sr);
         }
     }
-#if defined(__clang__) && (defined(__FMA__) || defined(__ARM_FEATURE_FMA))
+#if defined(__clang__) && (defined(__FMA__) || defined(__ARM_FEATURE_FMA)) && !(defined(DUSKVERB2_OPTIMIZED_DSP) && defined(__aarch64__) && defined(__FAST_MATH__))
     // Clang contracts a different part of the cubic when several reads share
     // a delay on FMA targets. Keep its sample-at-a-time evaluation there.
     outputBatchLimit_ = 1;

@@ -3,12 +3,48 @@
 #include "../../../shared-daf/dsp/DuskFilters.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 
 namespace DspUtils
 {
+
+// These LFO phases are wrapped by the caller. Include one repeated sample for
+// interpolation at the period boundary; the table is initialized at compile time.
+#if defined(DUSKVERB2_OPTIMIZED_DSP)
+inline constexpr int kSineTableSize = 2048;
+inline constexpr auto kSineTable = [] {
+    std::array<float, kSineTableSize + 1> table {};
+    constexpr double pi = 3.14159265358979323846;
+    for (int i = 0; i < kSineTableSize; ++i)
+    {
+        const double phase = i * (2.0 * pi / kSineTableSize);
+        const double x = phase < pi / 2 ? phase : (phase < 1.5 * pi ? pi - phase : phase - 2 * pi);
+        const double z = x * x;
+        table[i] = static_cast<float> (x + x * z * (-1.0/6 + z * (1.0/120 + z *
+            (-1.0/5040 + z * (1.0/362880 + z * (-1.0/39916800 + z/6227020800.0))))));
+    }
+    return table;
+}();
+#endif
+
+inline float modulationSine (float phase) noexcept
+{
+#if defined(DUSKVERB2_OPTIMIZED_DSP)
+    constexpr float scale = kSineTableSize / 6.2831853071795864769f;
+    // Some oscillators add a stereo offset of up to one turn.
+    if (phase >= 0.0f && phase <= 12.566371f)
+    {
+        const float position = phase * scale;
+        const int whole = static_cast<int> (position);
+        const int index = whole & (kSineTableSize - 1);
+        return kSineTable[index] + (position - whole) * (kSineTable[index + 1] - kSineTable[index]);
+    }
+#endif
+    return std::sin (phase);
+}
 
 // Tiny DC bias added to feedback paths to prevent denormal accumulation.
 // Small enough to be inaudible but keeps FPU out of slow denormal mode.
@@ -163,21 +199,41 @@ struct RandomWalkLFO
 
     float next()
     {
-        if (phase_ >= period_)
-        {
-            phase_  = 0;
-            prev_   = current_;
-            target_ = nextRandom() * depth_;
-        }
-        // Smoothstep S-curve: t² (3 − 2t).
-        const float t  = static_cast<float> (phase_) / static_cast<float> (period_);
-        const float s  = t * t * (3.0f - 2.0f * t);
-        current_       = prev_ + (target_ - prev_) * s;
-        ++phase_;
+        if (phase_ >= period_) startPeriod();
+        current_ = valueAt (phase_++);
         return current_;
     }
 
+    void nextBlock (float* out, int count)
+    {
+        while (count > 0)
+        {
+            if (phase_ >= period_) startPeriod();
+            const int span = std::min (period_ - phase_, count);
+            for (int i = 0; i < span; ++i)
+                out[i] = valueAt (phase_ + i);
+            current_ = out[span - 1];
+            phase_ += span;
+            out += span;
+            count -= span;
+        }
+    }
+
 private:
+    void startPeriod()
+    {
+        phase_ = 0;
+        prev_ = current_;
+        target_ = nextRandom() * depth_;
+    }
+
+    float valueAt (int phase) const
+    {
+        const float t = static_cast<float> (phase) / static_cast<float> (period_);
+        const float s = t * t * (3.0f - 2.0f * t);
+        return prev_ + (target_ - prev_) * s;
+    }
+
     float nextRandom()
     {
         // xorshift32 — cheap, decorrelated. Returns float in [-1, +1).
@@ -236,7 +292,7 @@ struct MultiSineLFO
         advance();
         if (depth_ == 0.0f) return 0.0f;
         // 0.5·(sin+sin) ∈ [-1,1]; ×depth = peak excursion in samples.
-        return depth_ * 0.5f * (std::sin (ph0_) + std::sin (ph1_));
+        return depth_ * 0.5f * (modulationSine (ph0_) + modulationSine (ph1_));
     }
 private:
     float sampleRate_ = 44100.0f;
@@ -292,7 +348,7 @@ struct CoherentSineLFO
     // gives each line its own decorrelated trail.
     float read (float pairOffset) const
     {
-        return std::sin (phase_ + pairOffset);
+        return modulationSine (phase_ + pairOffset);
     }
 
     float phase() const { return phase_; }
@@ -348,6 +404,7 @@ struct ParametricBand
             designUnity();
             return;
         }
+        unity_ = false;
         const float fc = std::clamp (freqHz, 20.0f, sampleRate_ * 0.49f);
         const float Q  = std::max (qFactor, 0.10f);
 
@@ -370,7 +427,11 @@ struct ParametricBand
 
     inline float processL (float x) noexcept
     {
-        const float y = b0_ * x + b1_ * x1L_ + b2_ * x2L_ - a1_ * y1L_ - a2_ * y2L_;
+        const float y =
+#if defined(DUSKVERB2_OPTIMIZED_DSP)
+            unity_ ? x :
+#endif
+            b0_ * x + b1_ * x1L_ + b2_ * x2L_ - a1_ * y1L_ - a2_ * y2L_;
         x2L_ = x1L_; x1L_ = x;
         y2L_ = y1L_; y1L_ = y;
         return y;
@@ -378,7 +439,11 @@ struct ParametricBand
 
     inline float processR (float x) noexcept
     {
-        const float y = b0_ * x + b1_ * x1R_ + b2_ * x2R_ - a1_ * y1R_ - a2_ * y2R_;
+        const float y =
+#if defined(DUSKVERB2_OPTIMIZED_DSP)
+            unity_ ? x :
+#endif
+            b0_ * x + b1_ * x1R_ + b2_ * x2R_ - a1_ * y1R_ - a2_ * y2R_;
         x2R_ = x1R_; x1R_ = x;
         y2R_ = y1R_; y1R_ = y;
         return y;
@@ -387,10 +452,12 @@ struct ParametricBand
 private:
     void designUnity() noexcept
     {
+        unity_ = true;
         b0_ = 1.0f; b1_ = 0.0f; b2_ = 0.0f;
         a1_ = 0.0f; a2_ = 0.0f;
     }
 
+    bool unity_ = true;
     float sampleRate_ = 44100.0f;
     float b0_ = 1.0f, b1_ = 0.0f, b2_ = 0.0f;
     float a1_ = 0.0f, a2_ = 0.0f;

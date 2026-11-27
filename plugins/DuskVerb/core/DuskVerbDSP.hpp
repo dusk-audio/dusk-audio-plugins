@@ -57,6 +57,7 @@
 #include "Dv2StereoBands.hpp"
 #include "dsp/SectionReverbEngine.h"
 #include "dsp/NonLinBurstEngine.h"
+#include "dsp/CompactPlate.hpp"
 
 #include <atomic>
 #include <optional>
@@ -68,6 +69,7 @@ namespace duskverb
 {
 
 struct SectionReverbRow;   // DuskVerbDv2Voicing.hpp
+struct EnginePatch;        // DuskVerbDv2Voicing.hpp
 
 // The optional room variant belongs to the recalled sound across prepare and reset.
 enum class RoomVoicing : unsigned char { Factory, EarlyStudy, Matched };
@@ -224,6 +226,7 @@ private:
     struct OwnVoice
     {
         NonLinBurstEngine nonLin;
+        CompactPlate plate;
         SectionReverbEngine sections;
         Dv2OutputShell shell;
         int algorithm = kNonLinAlgorithm;          // the own engine this voice plays while active
@@ -243,6 +246,9 @@ private:
     {
         EarlyField field;
         Dv2OutputShell shell;
+        bool monoShimmerInput = false;
+        bool usesMonoInput (const DuskVerbEngine& engine) const noexcept
+        { return monoShimmerInput && engine.engineType() == EngineType::Shimmer; }
         bool needsSnap = false;      // started over since the last push: land on the controls, no glide
     };
     OwnVoice& ownFor (const DuskVerbEngine* engine) noexcept { return engine == &engineB_ ? ownB_ : ownA_; }
@@ -260,6 +266,9 @@ private:
     const BandLimitSetting& bandLimitSettingFor (const FactoryPreset* preset) const noexcept;
     // The band width stage's gains for `preset`: the hook's, the patch's, or off.
     const StereoBands::Gains& stereoBandsFor (const FactoryPreset* preset) const noexcept;
+    // The engine patch the preset plays on the current algorithm: a session saved on the
+    // preset's earlier engine keeps that engine's patch.
+    const EnginePatch& enginePatchOf (const FactoryPreset* preset) const noexcept;
     void installEarlyField (const DuskVerbEngine* engine, const FactoryPreset* preset,
                             const DuskVerbEngine* outgoing) noexcept;
     // Takes `preset`'s Decay calibration for engineDecay() (nullptr, or a preset without one: none).

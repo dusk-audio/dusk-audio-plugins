@@ -11,6 +11,7 @@
 #include "DuskVerbParamTable.hpp"
 #include "DuskVerbPresetEngineConfig.h"
 #include "DuskVerbPresets.hpp"
+#include "LegacyRoomPresetFixtures.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -149,9 +150,11 @@ void testScalerOnEngines()
 {
     constexpr int kOct = DampingScaler::kOctaves;
 
-    // AccurateHall (Vocal Plate): a costly table, so live moves are budgeted.
+    // Old Vocal Plate sessions use the octave table and its per-block update budget.
     {
-        EngineUnderTest e(presetNamed("Vocal Plate"));
+        auto original = presetNamed("Vocal Plate");
+        original.algorithm = static_cast<int>(EngineType::AccurateHall);
+        EngineUnderTest e(original);
         const auto table = [&e](int k) { return e.engine->getAccurateHallOctaveT60(k); };
         float base[kOct];
         for (int k = 0; k < kOct; ++k) base[k] = table(k);
@@ -241,7 +244,7 @@ void testScalerOnEngines()
     // ParallelMultiband (Vocal Hall): every band in one block, level/direct/width kept; and a
     // neutral config does not let this scaler's scaling leak into the restored session.
     {
-        EngineUnderTest e(presetNamed("Vocal Hall"));
+        EngineUnderTest e(test::sharedPresetNamed("Vocal Hall"));
         constexpr int kB = DampingScaler::kPmbBands;
         float t60[kB], level[kB], direct[kB], width[kB];
         for (int b = 0; b < kB; ++b)

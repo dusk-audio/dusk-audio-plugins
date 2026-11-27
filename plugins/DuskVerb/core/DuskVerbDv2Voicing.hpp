@@ -37,16 +37,17 @@
 // side_offset_ms: one direct-tap pattern on both sides, the left later by that much (negative: the
 // right); shelf_db / shelf_hz: a low shelf on the direct taps and reflections; opposed=1: every
 // direct tap and reflection negative on the left and positive on the right. Octave trim: all nine bands' dB, 63 Hz first. Each
-// value is rounded to float, as a table row's is.
+// value is rounded to float, as a table row's is. reverse_mask flips individual reflections, bit 0 first.
 
 #pragma once
 
+#include "DuskVerbAlgorithms.hpp"
 #include "DuskVerbBandLimit.hpp"
 #include "DuskVerbEarlyField.hpp"
 #include "DuskVerbOctaveTrim.hpp"
 #include "DuskVerbTextParse.hpp"
 #include "Dv2StereoBands.hpp"
-#include "dsp/SectionReverbEngine.h"
+#include "DuskVerbSectionPresets.hpp"
 
 #include <algorithm>
 #include <array>
@@ -74,19 +75,6 @@ inline constexpr TankTrebleEq kTankTrebleEq[] {
     { "Vocal Plate",         10000.0f, 1.0f,  0.77f },
 };
 
-// The room, the chamber and the vintage plate (SectionReverbEngine, algorithms kRoomAlgorithm,
-// kChamberAlgorithm and kSectionPlateAlgorithm): per preset, the engine's configuration and the
-// DuskVerb control values it belongs to. The controls move the configuration from there
-// (DuskVerbDSP::pushSectionParameters), so the preset at its own values plays exactly this
-// configuration. A preset without a row of the engine's model, or a session that switched another
-// preset onto the engine, plays that model's first row.
-struct SectionReverbRow
-{
-    std::string_view name;
-    SectionReverbConfig config;
-    float decay, size, predelayMs, damping, bassMult, crossover, modDepth, modRate, diffusion, erLevel, erSize;
-};
-
 constexpr SectionReverbConfig liveRoomSectionConfig() noexcept
 {
     SectionReverbConfig c;
@@ -97,6 +85,44 @@ constexpr SectionReverbConfig liveRoomSectionConfig() noexcept
     c.spinHz = 1.8f; c.wanderMs = 4.0f; c.tailWidthDeg = 0.0f;
     c.earlyLevelDb = -21.0f; c.earlyFilter = { 0, 20000.0f, 3.0f, -96.0f };
     c.reverbLevelDb = -21.0f; c.reverbFilter = { 0, 12000.0f, 2.0f, -96.0f };
+    return c;
+}
+
+constexpr SectionReverbConfig mediumDrumRoomSectionConfig() noexcept
+{
+    SectionReverbConfig c;
+    c.model = static_cast<int> (SectionReverbModel::Room);
+    c.pattern = 2; c.diffusion = 52.0f; c.earlyPredelayMs = 3.0f; c.reverbPredelayMs = 5.0f;
+    c.roomScale = 1.8f; c.roomBassXoverHz = 400.0f; c.roomBassBoostDb = 5.0f;
+    c.sizeMeters = 39.5f; c.reverbTime = 1.24412286f; c.bassRt = 1.25f; c.bassXoverHz = 350.0f;
+    c.rtHiCutHz = 2500.0f; c.damping = 2; c.tapSlope = 0; c.spinHz = 1.8f; c.wanderMs = 4.0f;
+    c.earlyLevelDb = -14.0f; c.earlyFilter = { 0, 8500.0f, 3.0f, -96.0f };
+    c.reverbLevelDb = -16.0f; c.reverbFilter = { 0, 5000.0f, 2.2f, -96.0f };
+    return c;
+}
+
+constexpr SectionReverbConfig tiledRoomSectionConfig() noexcept
+{
+    SectionReverbConfig c;
+    c.model = static_cast<int> (SectionReverbModel::Room);
+    c.pattern = 3; c.diffusion = 50.0f; c.roomScale = 1.1f; c.roomBassXoverHz = 600.0f; c.roomBassBoostDb = -1.0f;
+    c.sizeMeters = 30.0f; c.reverbTime = 1.85471511f; c.bassRt = 2.0f; c.bassXoverHz = 450.0f;
+    c.rtHiCutHz = 2500.0f; c.damping = 1; c.tapSlope = 0; c.spinHz = 3.0f; c.wanderMs = 7.0f;
+    c.earlyLevelDb = -9.0f; c.earlyFilter = { 3, 65.0f, 3.0f, -27.0f };
+    c.reverbLevelDb = -96.0f; c.reverbFilter = { 0, 2500.0f, 2.0f, -96.0f };
+    return c;
+}
+
+constexpr SectionReverbConfig bigDrumRoomSectionConfig() noexcept
+{
+    SectionReverbConfig c;
+    c.model = static_cast<int> (SectionReverbModel::Room);
+    c.pattern = 4; c.diffusion = 100.0f; c.reverbPredelayMs = 60.0f;
+    c.roomScale = 2.0f; c.roomBassXoverHz = 1000.0f; c.roomBassBoostDb = 1.0f;
+    c.sizeMeters = 80.0f; c.reverbTime = 0.3214268684f; c.bassRt = 1.0f; c.bassXoverHz = 2325.0f;
+    c.rtHiCutHz = 8750.0f; c.damping = 1; c.tapSlope = 0; c.spinHz = 0.2f; c.wanderMs = 7.0f;
+    c.earlyLevelDb = -11.0f; c.earlyFilter = { 0, 4800.0f, 3.0f, -96.0f };
+    c.reverbLevelDb = -14.0f; c.reverbFilter = { 0, 9000.0f, 2.0f, -96.0f };
     return c;
 }
 
@@ -114,6 +140,20 @@ constexpr SectionReverbConfig largeChamberSectionConfig() noexcept
     c.reflections[1] = { 26.0f, 0, -9.0f };
     c.echoes[0] = { 6.0f, 0, -5.0f, 1, 0.0f };
     c.echoes[1] = { 10.0f, 0, -4.5f, 1, 0.0f };
+    return c;
+}
+
+// Short reflection delays, unity bass decay and separate 2.2/4.4 kHz early and late cuts.
+constexpr SectionReverbConfig cathedralHallSectionConfig() noexcept
+{
+    SectionReverbConfig c;
+    c.model = static_cast<int> (SectionReverbModel::Hall);
+    c.predelayMs = 21.0f; c.diffusion = 19.0f; c.shape = 26.0f; c.spread = 50.0f; c.sizeMeters = 66.0f;
+    c.reverbTime = 1.76721537f; c.bassRt = 1.0f; c.bassXoverHz = 850.0f; c.rtHiCutHz = 2500.0f; c.damping = 1;
+    c.tapSlope = 0; c.spinHz = 1.8f; c.wanderMs = 22.0f; c.reflectionTimePercent = 14.0f;
+    c.reflections = {{ { 50.0f, 0, -3.0f }, { 46.0f, 0, -3.0f }, { 81.0f, 0, -6.5f }, { 91.0f, 0, -6.5f } }};
+    c.earlyLevelDb = -6.0f; c.earlyFilter = { 0, 2200.0f, 1.1f, -96.0f };
+    c.reverbLevelDb = -6.0f; c.reverbFilter = { 0, 4400.0f, 1.1f, -96.0f };
     return c;
 }
 
@@ -173,6 +213,11 @@ inline constexpr SectionReverbRow kSectionReverbByName[] {
     //                                                         decay   size     pre    damp    bass     xover     depth    rate      diff     erLvl  erSize
     { "Live Room",           liveRoomSectionConfig(),           0.66f,  0.45f,   3.0f,  0.81f,  1.4f,    317.135f, 0.10f,   0.80f,    0.72f,   0.50f, 0.15f },
     { "Reverse Taps",        reverseTapsSectionConfig(),        0.11f,  0.59f,   0.0f,  1.32f,  0.61f,   451.0f,   0.1395f, 2.28741f, 0.19f,   0.0f,  0.30f },
+    { "Medium Drum Room",    mediumDrumRoomSectionConfig(),    2.0f,   0.40165f, 3.0f,  1.418f,  1.488f,   471.781f, 0.03176f, 0.62647f, 0.60f,   0.45f, 0.41204f },
+    kVocalHallRoom,
+    { "Big Drum Room",       bigDrumRoomSectionConfig(),       1.32f,  0.90f,    0.0f,  1.0f,    1.0f,    2325.0f,   0.30f,    0.20f,    1.0f,    0.50f, 0.75f },
+    { "Tiled Room",          tiledRoomSectionConfig(),          0.692f, 0.4794f,  0.0f,  1.25f,   1.319f,   200.0f,   0.29f,    2.398f,   0.4139f, 0.46f, 0.40f },
+    { "Cathedral Large Hall", cathedralHallSectionConfig(),     4.434f, 0.825f,   21.0f, 1.0f,   1.0f,    850.0f,   0.88f,    1.8f,      0.19f,   0.50f, 0.50f },
     { "Large Chamber",       largeChamberSectionConfig(),       4.454f, 0.55f,   6.0f,  1.323f, 1.411f,  373.086f, 0.30f,   1.00f,    0.60f,   0.12f, 0.45f },
     { "Vintage Vocal Plate", vintageVocalPlateSectionConfig(),  0.90f,  0.80357f, 20.0f, 1.3f,  1.38104f, 522.55f, 0.70f,   1.64421f, 0.2423f, 0.0f,  0.30f },
     { "Vintage Gold Plate",  vintageGoldPlateSectionConfig(),   1.961f, 0.45f,   0.0f,  1.50f,  1.40f,   683.296f, 0.0f,    1.00f,    0.85f,   0.30f, 0.45f },
@@ -191,20 +236,63 @@ inline const SectionReverbRow& sectionRowFor (std::string_view name, int model) 
         if (first == nullptr)
             first = &row;
     }
+    for (const auto& row : kStudioPresets)
+        if (row.config.model == model)
+        {
+            if (row.name == name) return row;
+            if (first == nullptr) first = &row;
+        }
     return first != nullptr ? *first : kSectionReverbByName[0];
 }
 
 // Linear scans avoid allocation on audio-thread preset swaps. Reverse Taps has no early
 // field because an added reflection would precede its 104 ms swell.
-inline constexpr std::array<std::pair<std::string_view, EarlyFieldConfig>, 12> kEarlyFieldByName = {{
+inline constexpr std::array<std::pair<std::string_view, EarlyFieldConfig>, 8> kEarlyFieldByName = {{
     { "79 Vocal Chamber", { true, 4.25756359f, 96.0729065f, 12, -9.77004528f, 10.4802465f, 0.31861499f, -28.9938297f, -30.0085945f, 1, { 139.600006f, 0.0f, 0.0f, 0.0f }, 8108.08154f } },
     { "Ambience", { true, 7.06542063f, 59.5682564f, 35, -11.0286026f, 11.4732685f, 0.25128606f, -19.8183575f, -3.19089723f, 0, { 0.0f, 0.0f, 0.0f, 0.0f }, 12539.1162f } },
-    { "Black Hole", { true, 21.2365303f, 26.2922516f, 30, 6.44021177f, 7.83394241f, 0.0345296673f, -37.6771126f, -43.4104271f, 0, { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }, 7663.49902f } },
-    { "Blade Runner 224", { true, 18.7080059f, 139.413055f, 14, 17.8804531f, 26.7212734f, 0.195128068f, -33.1625214f, -35.396122f, 1, { 72.5f, 83.5f, 96.6999969f, 107.199997f }, 4371.63037f } },
+    // Black Hole has a centered first arrival and four repeats before the tank swells.
+    { "Black Hole", [] {
+        EarlyFieldConfig c;
+        c.enabled = true;
+        c.startMs = 170.0f;
+        c.windowMs = 200.0f;
+        c.taps = 9;
+        c.slopeDb = 6.44f;
+        c.attackMs = 7.83f;
+        c.inject = 0.85f;
+        c.lowpassHz = 18500.0f;
+        c.shelfHz = 2000.0f;
+        c.shelfDb = -12.0f;
+        c.reflDb = -18.0f;
+        c.reflCount = 10;
+        c.reflMs = { 0.333f, 0.333f, 33.583f, 33.583f, 66.625f, 66.625f, 101.0f, 104.5f, 136.33f, 136.33f };
+        c.reflTrimDb = { 0.0f, 0.0f, -15.0f, -15.0f, -18.0f, -18.0f, -20.0f, -20.0f, -23.0f, -23.0f };
+        c.reversedReflections = 0x3fc;   // both channels repeat the positive arrival in opposite polarity
+        c.burstDb = -37.0f;
+        c.burstStartMs = 32.5f;
+        c.burstMs = 6.0f;
+        c.burstLowpassHz = 7500.0f;
+        return c;
+    }() },
+    // A short, filtered burst puts the attack peak 23 ms after the first arrival.
+    { "Blade Runner 224", { true, 18.7080059f, 139.413055f, 14, 17.8804531f, 26.7212734f, 0.195f, -33.1625214f, -35.396122f, 1,
+                            { 72.5f }, 4371.63037f, -23.0f, 58.5f, 5.0f, 3000.0f } },
     { "Bright Hall", { true, 24.3353748f, 43.1242447f, 24, -2.03443122f, 32.0085106f, 0.122109905f, -44.5202599f, -21.0369987f, 4, { 57.7999992f, 84.0f, 146.399994f, 158.199997f }, 9670.87305f } },
-    { "Cathedral Large Hall", { true, 5.31908464f, 64.9212952f, 9, 25.4141865f, 6.62954283f, 0.110564433f, -33.2627449f, -25.7314243f, 1, { 75.8000031f, 89.1999969f, 100.400002f, 120.400002f }, 3043.54565f } },
+    { "Deep Blue Day", [] {
+        EarlyFieldConfig c;
+        c.enabled = true;
+        c.taps = 1;
+        c.invertedTapSamples = 16;
+        c.directDb = -8.0f;
+        c.lowpassHz = 20000.0f;
+        c.reflDb = -22.0f;
+        c.reflCount = 10;
+        c.reflMs = { 45.4f, 44.1f, 79.25f, 63.94f, 91.21f, 102.98f, 116.10f, 127.52f, 142.10f, 148.81f };
+        c.shelfHz = 1800.0f;
+        c.shelfDb = -6.0f;
+        return c;
+    }() },
     { "Drum Plate", { true, 23.7823124f, 95.547348f, 52, -6.96349955f, 13.4607134f, 0.0510928929f, -37.5638885f, -25.0350285f, 0, { 0.0f, 0.0f, 0.0f, 0.0f }, 3548.1543f } },
-    { "Medium Drum Room", { true, 15.3603783f, 269.405121f, 37, -13.6343489f, 25.6628685f, 0.114372894f, -49.5636711f, -44.9116936f, 2, { 40.0f, 51.2000008f, 92.1999969f, 191.800003f }, 2712.16797f } },
     // The target is six discrete arrivals a side between 5.5 and 17 ms that hold
     // 89 % of its energy, then faint repeats near 70, 100 and 155 ms. The field's direct taps sit on
     // that window (the October row had them there at -31 dB, under a sparse early field that carried
@@ -215,12 +303,6 @@ inline constexpr std::array<std::pair<std::string_view, EarlyFieldConfig>, 12> k
     // level (the October row) did not fall off from 70 to 157 ms, which read as a slow decay at
     // 125 and 250 Hz and left the reflection at 68 ms without its prominence.
     { "Small Drum Room", { true, 5.30000019f, 12.0f, 27, -6.0f, 4.0f, 0.000949187553f, -18.0f, -24.0f, 7, { 62.4000015f, 64.4000015f, 67.3000031f, 71.5f, 79.6999969f, 101.400002f, 156.800003f, 0.0f, 0.0f, 0.0f }, 2468.91699f } },
-    { "Tiled Room", { true, 31.1826839f, 60.6504745f, 18, 8.46437454f, 17.4806652f, 0.0751035661f, -33.7343483f, -9.97643089f, 0, { 31.5f, 55.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }, 7302.31396f } },
-    { "Vocal Hall", { true, 17.5882149f, 126.435921f, 34, -9.35655785f, 16.4620075f, 0.183764786f, -40.6726379f, -42.1176491f, 0, { 42.5999985f, 66.1999969f, 121.199997f, 133.600006f }, 9869.50977f } },
-    // The low shelf takes 9 dB off the field under 300 Hz: with the lows' decay set to the
-    // target's (kEnginePatchByName) the field's early lows left the snare and the music 5 to 7 dB
-    // over the target around 100 Hz and the tail 4 to 15 dB under it at 0.5 to 1 s (2026-11-21).
-    { "Vocal Plate", { true, 16.104126f, 33.4986496f, 31, 15.3803778f, 8.20212746f, 0.317118138f, -13.7928858f, -11.1442814f, 3, { 45.5f, 61.0f, 73.8000031f, 82.5999985f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }, 13705.5713f, -120.0f, 0.0f, 4.0f, 12000.0f, -120.0f, 15.0f, 30.0f, 2.0f, 250.0f, { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }, 0.0f, -9.0f, 300.0f } },
 }};
 
 inline constexpr EarlyFieldConfig kNoEarlyField {};
@@ -300,7 +382,7 @@ inline bool parseEarlyFieldConfig (const char* text, EarlyFieldConfig& out,
                                                   "refl_count", "refl_ms", "lowpass_hz", "burst_db",
                                                   "burst_start_ms", "burst_ms", "burst_lp_hz", "side_db",
                                                   "side_start_ms", "side_ms", "side_attack_ms", "side_lp_hz",
-                                                  "refl_trim_db", "side_offset_ms", "shelf_db", "shelf_hz", "opposed" };
+                                                  "refl_trim_db", "side_offset_ms", "shelf_db", "shelf_hz", "opposed", "inverted_tap_samples", "reverse_mask" };
     bool seen[std::size (kKeys)] {};
     EarlyFieldConfig c;
     for (const char* p = text;;)
@@ -328,6 +410,8 @@ inline bool parseEarlyFieldConfig (const char* text, EarlyFieldConfig& out,
         else if (key == "opposed")    { ok = detail::parseInteger (value, n) && (n == 0 || n == 1); c.sidesOpposed = n == 1; }
         else if (key == "taps")       { ok = detail::parseInteger (value, n); c.taps = n; }
         else if (key == "refl_count") { ok = detail::parseInteger (value, n); c.reflCount = n; }
+        else if (key == "reverse_mask") { ok = detail::parseInteger (value, n) && n >= 0; c.reversedReflections = static_cast<unsigned> (n); }
+        else if (key == "inverted_tap_samples") { ok = detail::parseInteger (value, n); c.invertedTapSamples = n; }
         else if (key == "refl_ms" || key == "refl_trim_db")
         {
             auto& list = key == "refl_ms" ? c.reflMs : c.reflTrimDb;
@@ -402,7 +486,7 @@ inline int formatEarlyFieldConfig (const EarlyFieldConfig& c, char* out, size_t 
                           "inject=%.9g,direct_db=%.9g,refl_db=%.9g,refl_count=%d,refl_ms=%s,lowpass_hz=%.9g,"
                           "burst_db=%.9g,burst_start_ms=%.9g,burst_ms=%.9g,burst_lp_hz=%.9g,"
                           "side_db=%.9g,side_start_ms=%.9g,side_ms=%.9g,side_attack_ms=%.9g,side_lp_hz=%.9g,refl_trim_db=%s,"
-                          "side_offset_ms=%.9g,shelf_db=%.9g,shelf_hz=%.9g,opposed=%d",
+                          "side_offset_ms=%.9g,shelf_db=%.9g,shelf_hz=%.9g,opposed=%d,inverted_tap_samples=%d,reverse_mask=%u",
                           c.enabled ? 1 : 0, static_cast<double> (c.startMs), static_cast<double> (c.windowMs),
                           c.taps, static_cast<double> (c.slopeDb), static_cast<double> (c.attackMs),
                           static_cast<double> (c.inject), static_cast<double> (c.directDb),
@@ -412,29 +496,25 @@ inline int formatEarlyFieldConfig (const EarlyFieldConfig& c, char* out, size_t 
                           static_cast<double> (c.sideDb), static_cast<double> (c.sideStartMs),
                           static_cast<double> (c.sideMs), static_cast<double> (c.sideAttackMs),
                           static_cast<double> (c.sideLowpassHz), trim, static_cast<double> (c.sideOffsetMs),
-                          static_cast<double> (c.shelfDb), static_cast<double> (c.shelfHz), c.sidesOpposed ? 1 : 0);
+                          static_cast<double> (c.shelfDb), static_cast<double> (c.shelfHz), c.sidesOpposed ? 1 : 0,
+                          c.invertedTapSamples, c.reversedReflections);
 }
 
 // Nine octave gains in dB, starting at 63 Hz; applied with the early-field table on preset swaps.
-inline constexpr std::array<std::pair<std::string_view, OctaveTrimGains>, 12> kOctaveTrimByName {{
+inline constexpr std::array<std::pair<std::string_view, OctaveTrimGains>, 8> kOctaveTrimByName {{
     { "79 Vocal Chamber", {{ 0.634247541f, 0.842392206f, -0.207816824f, 0.0676435381f, -0.0266304873f, 0.336835057f, 0.43775034f, 0.643186927f, 0.988179445f }} },
     { "Ambience", {{ -2.9757f, -1.8353f, -1.2269f, 1.5722f, 1.0831f, 2.9842f, -0.9412f, 1.686f, 0.4635f }} },
     { "Black Hole", {{ 0.442480981f, 1.24710643f, -0.75896579f, -0.185511813f, 0.490530103f, -0.0265136957f, -2.44492841f, -0.747641146f, 0.278195381f }} },
-    { "Blade Runner 224", {{ -0.587038398f, -0.438739717f, -1.16214919f, -0.132971317f, -1.19541728f, -1.0167501f, 0.573673308f, -1.29499841f, -1.23172176f }} },
+    { "Blade Runner 224", {{ -2.937f, -0.089f, 0.688f, 1.417f, -1.195f, -1.017f, 0.574f, -2.045f, -1.982f }} },
     { "Bright Hall", {{ 0.349530995f, 0.1005008f, 0.68877244f, 2.14985514f, 2.487679f, 1.83931005f, 0.688625991f, 1.53471124f, -2.24387121f }} },
-    { "Deep Blue Day", {{ 0.515359402f, 1.46957862f, -0.612119913f, 1.24398839f, 1.23909926f, -0.224919796f, 0.0697899982f, 0.141160831f, 0.900486708f }} },
+    { "Deep Blue Day", {{ 0.515359402f, 1.46957862f, -0.612119913f, 1.24398839f, -1.35f, 2.4f, -1.5f, -2.4f, 0.0f }} },
     { "Drum Plate", {{ 1.29575813f, -0.106312878f, -0.227102667f, -1.63319695f, 0.337353289f, -1.0894171f, -0.775684178f, 1.59402931f, -2.33097458f }} },
-    // This tilt balances low-mid energy against the densifier and band-level settings.
-    { "Medium Drum Room", {{ -0.298f, -0.982f, -1.917f, -1.799f, -1.011f, -0.531f, 1.716f, 0.614f, -2.985f }} },
     // The least-squares row for the target's match-EQ curve (the whole clip's third octaves, snare
     // and music at equal loudness), fitted on renders with the
     // early field row (seven reflections), no sparse early field and Width 1.05: every band of both clips inside 3 dB.
     // The October row cut 2 kHz by 2.2 dB where the preset was 5 dB short. 4 kHz, 8 kHz and 16 kHz
     // end on the range's limits.
     { "Small Drum Room", {{ -1.048f, -0.714f, -2.705f, 1.849f, 2.629f, 0.767f, 3.0f, 3.0f, -3.0f }} },
-    { "Tiled Room", {{ 2.96405005f, -0.11537648f, -1.23354101f, 0.0184728466f, 0.38636291f, 0.236264035f, -0.0842026472f, 1.81604993f, 1.36784935f }} },
-    { "Vocal Plate", {{ -1.8f, 3.0f, 3.0f, -2.29f, 0.07f, -1.43f, -0.62f, -0.57f, -2.72f }} },   // refit 2026-11-21 with the field shelf and the lows' decay
-    { "Vocal Hall", {{ -0.3929f, -0.3537f, -2.5837f, -0.588f, -0.8468f, -2.499f, 0.1842f, -2.5404f, -2.462f }} },
 }};
 
 inline constexpr OctaveTrimGains kFlatOctaveTrim {};
@@ -688,6 +768,7 @@ struct EnginePatch
     std::array<float, 7> sustainLimitMid { -1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
     std::array<float, 7> sustainLimitLow { -1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
     int denseHallStaticAllpasses = 0;
+    float tankDelayMs = 0.0f;    // Late tank only. The early reflections retain their timing.
 };
 
 // Whether {low Hz, high Hz, threshold dB, most cut dB, attack ms, fast release ms, slow release ms}
@@ -813,7 +894,7 @@ inline bool parsePmbLevel (const char* text, std::array<float, 6>& out) noexcept
     return detail::parseNumberList (text, out, 0.1, 4.0, true);
 }
 
-inline constexpr std::array<std::pair<std::string_view, EnginePatch>, 10> kEnginePatchByName {{
+inline constexpr std::array<std::pair<std::string_view, EnginePatch>, 9> kEnginePatchByName {{
     // Lower densifier coefficients spread the clustered low-mid modes without moving the attack.
     { "Medium Drum Room", { true, { 1.0f, 1.0f, 1.15f, 1.15f, 1.2f, 1.2f },
                             { 1.05023f, 0.983058f, 0.983058f, 0.97726f, 1.0728f, 1.0728f, 0.973603f, 1.0f, 1.0f },
@@ -827,17 +908,22 @@ inline constexpr std::array<std::pair<std::string_view, EnginePatch>, 10> kEngin
                     { 0.0f, 1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }, -1.0f, StereoBands::kOff,
                     { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }, 0.0f, { 0.0f, 1.0f },
                     { 794, 1018, 1046, 1317, 1502, 2109, 2483, 2881, 3273, 4168, 3879, 4790, 4666, 5268, 6188, 6176 } } },
-    // Filter the sparse early field rather than lowering its gain, which also carries the attack.
-    { "Blade Runner 224", { false, { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.15f },
-                            { -1.0f, 0.0f }, { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }, -1.0f, StereoBands::kOff,
-                            { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }, 8000.0f } },
+    // Delaying the dense tail lets the later reflection emerge between the attack and the swell.
+    { "Blade Runner 224", [] {
+        EnginePatch patch;
+        patch.octaveDecay[1] = 1.12f;   // 125 Hz
+        patch.octaveDecay[8] = 1.15f;   // 16 kHz
+        patch.sparseERLowpassHz = 9400.0f;
+        patch.tankDelayMs = 42.0f;
+        return patch;
+    }() },
     { "Tiled Room", { false, { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f }, { 1.0f, 1.15f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f } } },
-    // The shared table's 63 and 125 Hz decay (0.41 and 0.39 s, shortened in July against a judge
-    // that read the mono sum and matched gain on the whole band) left the realized T60 28 and 23 %
-    // under the target's 0.62 and 0.54 s, and the 40-200 Hz tail 21 to 24 dB under it at 0.5 to
-    // 1 s; 500 Hz ran 11 % long. With these the four octaves read within 10 % (2026-11-21).
-    { "Vocal Plate", { false, { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f }, { 1.38f, 1.29f, 1.0f, 0.9f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f } } },
-    { "Black Hole", { false, { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }, { 50.0f, 2.0f } } },
+    { "Black Hole", [] {
+        EnginePatch patch;
+        patch.modeSmear = { 50.0f, 2.0f };
+        patch.stereoBands = { 0.82f, 0.64f, 0.59f };
+        return patch;
+    }() },
     // Cubic-Hermite reads in jittered density allpasses shorten top-octave decay; disable jitter here.
     { "Drum Plate", { false, { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f }, { 1.0f, 1.05f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.8178f, 0.3f }, { -1.0f, 0.0f }, { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }, 0.0f } },
     // Uniform band gain avoids the excess anti-phase high-frequency output of the shared width row.
@@ -864,42 +950,48 @@ inline constexpr std::array<std::pair<std::string_view, EnginePatch>, 10> kEngin
 
 inline constexpr EnginePatch kNoEnginePatch {};
 
+constexpr bool enginePatchValid (const EnginePatch& patch) noexcept
+{
+    for (float w : patch.pmbWidth)
+        if (w > 2.0f)
+            return false;
+    for (float m : patch.octaveDecay)
+        if (! (m > 0.05f && m < 20.0f))
+            return false;
+    if (patch.modeSmear[0] > 256.0f || (patch.modeSmear[0] >= 0.0f
+                                              && ! (patch.modeSmear[1] > 0.0f && patch.modeSmear[1] <= 5.0f)))
+        return false;
+    for (float s : patch.pmbSmearShare)
+        if (! (s >= 0.0f && s <= 1.0f))
+            return false;
+    if (patch.densityJitter > 0.02f || ! StereoBands::valid (patch.stereoBands))
+        return false;
+    for (float k : patch.pmbDensifier)
+        if (! (k >= -1.0f && k <= 0.75f))
+            return false;
+    for (float m : patch.pmbLevel)
+        if (! (m >= 0.1f && m <= 4.0f))
+            return false;
+    if (! (patch.sparseERLowpassHz == 0.0f
+           || (patch.sparseERLowpassHz >= 1000.0f && patch.sparseERLowpassHz <= 20000.0f)))
+        return false;
+    if (! ((patch.dualSlope[0] == 0.0f || (patch.dualSlope[0] >= 0.05f && patch.dualSlope[0] <= 1.0f))
+           && patch.dualSlope[1] >= 0.0f && patch.dualSlope[1] <= 4.0f))
+        return false;
+    if (! fdnDelaysValid (patch.fdnDelays) || ! fbRotationValid (patch.fbRotation)
+        || ! sparseERShapeValid (patch.sparseERShape) || ! tankOnsetValid (patch.tankOnset)
+        || ! sustainLimitValid (patch.sustainLimitMid) || ! sustainLimitValid (patch.sustainLimitLow)
+        || patch.denseHallStaticAllpasses < 0 || patch.denseHallStaticAllpasses > 2
+        || ! (patch.tankDelayMs >= 0.0f && patch.tankDelayMs <= 200.0f))
+        return false;
+    return true;
+}
+
 constexpr bool enginePatchTableValid() noexcept
 {
     for (auto row = kEnginePatchByName.begin(); row != kEnginePatchByName.end(); ++row)
     {
-        if (row->first.empty())
-            return false;
-        for (float w : row->second.pmbWidth)
-            if (w > 2.0f)
-                return false;
-        for (float m : row->second.octaveDecay)
-            if (! (m > 0.05f && m < 20.0f))
-                return false;
-        if (row->second.modeSmear[0] > 256.0f || (row->second.modeSmear[0] >= 0.0f
-                                                  && ! (row->second.modeSmear[1] > 0.0f && row->second.modeSmear[1] <= 5.0f)))
-            return false;
-        for (float s : row->second.pmbSmearShare)
-            if (! (s >= 0.0f && s <= 1.0f))
-                return false;
-        if (row->second.densityJitter > 0.02f || ! StereoBands::valid (row->second.stereoBands))
-            return false;
-        for (float k : row->second.pmbDensifier)
-            if (! (k >= -1.0f && k <= 0.75f))
-                return false;
-        for (float m : row->second.pmbLevel)
-            if (! (m >= 0.1f && m <= 4.0f))
-                return false;
-        if (! (row->second.sparseERLowpassHz == 0.0f
-               || (row->second.sparseERLowpassHz >= 1000.0f && row->second.sparseERLowpassHz <= 20000.0f)))
-            return false;
-        if (! ((row->second.dualSlope[0] == 0.0f || (row->second.dualSlope[0] >= 0.05f && row->second.dualSlope[0] <= 1.0f))
-               && row->second.dualSlope[1] >= 0.0f && row->second.dualSlope[1] <= 4.0f))
-            return false;
-        if (! fdnDelaysValid (row->second.fdnDelays) || ! fbRotationValid (row->second.fbRotation)
-            || ! sparseERShapeValid (row->second.sparseERShape) || ! tankOnsetValid (row->second.tankOnset)
-            || ! sustainLimitValid (row->second.sustainLimitMid) || ! sustainLimitValid (row->second.sustainLimitLow)
-            || row->second.denseHallStaticAllpasses < 0 || row->second.denseHallStaticAllpasses > 2)
+        if (row->first.empty() || ! enginePatchValid (row->second))
             return false;
         for (auto earlier = kEnginePatchByName.begin(); earlier != row; ++earlier)
             if (earlier->first == row->first)
@@ -916,6 +1008,84 @@ inline const EnginePatch& enginePatchFor (std::string_view name) noexcept
         if (row.first == name)
             return row.second;
     return kNoEnginePatch;
+}
+
+// Sessions save the algorithm and parameter values alongside the factory name. A preset that has
+// moved to another engine keeps, for a session saved on the earlier one, what it played there: the
+// early field, output EQ and decay calibration, and where they differ from the preset's current
+// rows the engine patch and the fourth tank band. The values are those of release 1.0.3.
+struct LegacyPresetVoicing
+{
+    std::string_view name;
+    int portedAlgorithm;
+    EngineType algorithm;
+    float shownDecay;  // zero when the original engine followed the knob directly
+    EarlyFieldConfig earlyField;
+    OctaveTrimGains octaveTrim;
+    const EnginePatch* enginePatch = nullptr;    // unset: the preset's current row
+    const TankTrebleEq* tankTreble = nullptr;    // unset: the preset's current row
+};
+inline constexpr EnginePatch kLegacyLiveRoomPatch { false, { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }, { 40.0f, 2.5f }, { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }, -1.0f, { 0.533333f, 0.533333f, 0.666667f } };
+inline constexpr EnginePatch kLegacyVintageVocalPlatePatch { false, { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f }, { 1.15f, 1.0f, 0.85f, 1.0f, 1.0f, 1.15f, 1.0f, 1.0f, 1.0f } };
+inline constexpr TankTrebleEq kLegacyVintageVocalPlateTreble { "Vintage Vocal Plate", 10800.0f, 2.2f, -1.7f };
+inline constexpr LegacyPresetVoicing kLegacyPresetVoicing[] {
+    { "Vocal Plate", kCompactPlateAlgorithm, EngineType::AccurateHall, 0.73f,
+      { true, 16.104126f, 33.4986496f, 31, 15.3803778f, 8.20212746f, 0.317118138f, -13.7928858f, -11.1442814f, 3, { 45.5f, 61.0f, 73.8000031f, 82.5999985f }, 13705.5713f },
+      {{ -2.7255f, 2.4827f, 2.1602f, 0.3244f, 1.3887f, 1.7572f, 2.3243f, -1.7645f, -1.6393f }}, &kNoEnginePatch },
+    { "Vintage Vocal Plate", kSectionPlateAlgorithm, EngineType::DattorroVintage, 0.78f,
+      { true, 13.057683f, 43.1177406f, 19, 6.80627155f, 32.5891571f, 0.139030248f, -51.124691f, -42.8224068f, 1, { 114.300003f, 125.800003f, 154.600006f, 0.0f }, 8124.59082f },
+      {{ -0.785391271f, -0.0869825855f, 1.26347637f, 0.367175251f, 2.13951373f, -0.3122679f, -1.34776425f, -1.06126356f, 0.296430409f }}, &kLegacyVintageVocalPlatePatch, &kLegacyVintageVocalPlateTreble },
+    { "Vintage Gold Plate", kSectionPlateAlgorithm, EngineType::Dattorro, 1.79f,
+      { true, 27.4996796f, 27.0168591f, 19, -13.9333677f, 36.6331558f, 0.47833398f, -48.1144867f, -13.3144732f, 0, { 0.0f, 0.0f, 0.0f, 0.0f }, 5850.14111f, -36.0f, 28.87f, 5.3f, 10028.0f },
+      {{ 1.00932944f, -1.89307177f, -0.025091961f, 0.958136261f, -1.1617521f, 2.40072703f, -2.73682666f, -2.15866685f, -1.0f }} },
+    { "Large Chamber", kChamberAlgorithm, EngineType::DenseHall, 2.82f,
+      { true, 8.71381283f, 37.679245f, 16, 19.2764759f, 4.1543417f, 0.121218048f, -22.8722038f, -20.4045582f, 3, { 53.4000015f, 81.9000015f, 104.800003f, 142.199997f }, 7576.125f },
+      {{ 2.29713774f, 1.2263025f, -0.649435639f, 0.620101988f, 1.91332257f, 1.03331375f, -1.48754799f, 2.62679315f, -0.555481493f }} },
+    { "Live Room", kRoomAlgorithm, EngineType::Dattorro, 0.66f,
+      { true, 0.0f, 50.0f, 16, 0.0f, 0.0f, 0.0f, -120.0f, -120.0f, 0, { 0.0f, 0.0f, 0.0f, 0.0f }, 8000.0f, -120.0f, 0.0f, 4.0f, 12000.0f, -7.0f, 17.0f, 30.0f, 2.0f, 250.0f },
+      {{ 0.622846842f, -0.463719219f, 0.588961184f, 0.452516139f, 0.18761763f, -0.888634801f, -0.827028215f, 0.209748209f, 0.830334663f }}, &kLegacyLiveRoomPatch },
+    { "Reverse Taps", kRoomAlgorithm, EngineType::ReverseRoom, 0.0f,
+      {},
+      {{ 0.316647798f, 2.20800257f, 2.27045536f, 2.24588609f, 0.484986275f, 0.368917704f, -0.371552557f, 1.25592148f, -1.37708199f }} },
+    { "Cathedral Large Hall", kSectionHallAlgorithm, EngineType::DenseHall, 3.37f,
+      { true, 5.31908464f, 64.9212952f, 9, 25.4141865f, 6.62954283f, 0.110564433f, -33.2627449f, -25.7314243f, 1, { 75.8000031f, 89.1999969f, 100.400002f, 120.400002f }, 3043.54565f }, kFlatOctaveTrim },
+    { "Vocal Hall", kRoomAlgorithm, EngineType::ParallelMultiband, 3.64f,
+      { true, 17.5882149f, 126.435921f, 34, -9.35655785f, 16.4620075f, 0.183764786f, -40.6726379f, -42.1176491f, 0, { 42.5999985f, 66.1999969f, 121.199997f, 133.600006f }, 9869.50977f },
+      {{ -0.3929f, -0.3537f, -2.5837f, -0.588f, -0.8468f, -2.499f, 0.1842f, -2.5404f, -2.462f }} },
+    { "Medium Drum Room", kRoomAlgorithm, EngineType::ParallelMultiband, 0.78f,
+      { true, 15.3603783f, 269.405121f, 37, -13.6343489f, 25.6628685f, 0.114372894f, -49.5636711f, -44.9116936f, 2, { 40.0f, 51.2000008f, 92.1999969f, 191.800003f }, 2712.16797f },
+      {{ -0.298f, -0.982f, -1.917f, -1.799f, -1.011f, -0.531f, 1.716f, 0.614f, -2.985f }} },
+    { "Tiled Room", kRoomAlgorithm, EngineType::TiledRoom, 0.0f,
+      { true, 31.1826839f, 60.6504745f, 18, 8.46437454f, 17.4806652f, 0.0751035661f, -33.7343483f, -9.97643089f, 0, { 31.5f, 55.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }, 7302.31396f },
+      {{ 2.96405005f, -0.11537648f, -1.23354101f, 0.0184728466f, 0.38636291f, 0.236264035f, -0.0842026472f, 1.81604993f, 1.36784935f }} },
+};
+
+constexpr bool legacyPresetVoicingValid() noexcept
+{
+    for (size_t i = 0; i < std::size (kLegacyPresetVoicing); ++i)
+    {
+        const auto& row = kLegacyPresetVoicing[i];
+        if (row.name.empty() || ! EarlyField::valid (row.earlyField) || ! OctaveTrim::valid (row.octaveTrim)
+            || (row.enginePatch != nullptr && ! enginePatchValid (*row.enginePatch)))
+            return false;
+        for (size_t j = 0; j < i; ++j)
+            if (kLegacyPresetVoicing[j].name == row.name)
+                return false;
+    }
+    return true;
+}
+static_assert (legacyPresetVoicingValid(), "legacy voicing requires unique preset names and valid early fields, trims and patches");
+
+// The row for preset `name` on `algorithm`, or none. Only an algorithm release 1.0.3 had can come
+// from one of its sessions: on the engines added since, a preset plays its current rows.
+inline const LegacyPresetVoicing* legacyPresetVoicingFor (std::string_view name, int algorithm) noexcept
+{
+    if (algorithm > kNonLinAlgorithm)
+        return nullptr;
+    for (const auto& row : kLegacyPresetVoicing)
+        if (row.name == name && algorithm != row.portedAlgorithm)
+            return &row;
+    return nullptr;
 }
 
 } // namespace duskverb

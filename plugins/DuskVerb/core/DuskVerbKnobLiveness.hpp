@@ -86,6 +86,8 @@ inline bool controlLive (int algorithm, int paramId) noexcept
     const int engine = resolveAlgorithm (algorithm);
     if (engine == kNonLinAlgorithm)
         return nonLinHears (paramId);
+    if (engine == kCompactPlateAlgorithm)
+        return paramId == Freeze || paramId == MidMult || paramId == HighCrossover || sectionReverbHears (paramId);
     if (isSectionAlgorithm (engine))
         return sectionReverbHears (paramId);
 

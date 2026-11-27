@@ -17,6 +17,9 @@ namespace duskverb
 // then only loads the cached pointers from the audio thread.
 void primeTuningEnvCache() noexcept;
 
+// Use the cached DUSKVERB_TANKONSET sweep value when present.
+void applyTankOnsetDelay (DuskVerbEngine& engine, float milliseconds) noexcept;
+
 // Per-preset PostTankEQ band centre frequencies and Qs. The four band GAINS are
 // ordinary parameters; freq + Q come from the name-keyed table (or the
 // DUSKVERB_PTEQ sweep override) and must be cached at preset-swap time so the

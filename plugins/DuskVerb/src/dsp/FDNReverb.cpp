@@ -515,6 +515,19 @@ void FDNReverbT<WithOctaveGEQ, N>::processLoop (const float* inputL, const float
         && dampingModActive_ && ! frozen;
 
 
+    FiveBandDamping::Bank<N> dampingBank;
+#if defined(DUSKVERB2_OPTIMIZED_DSP)
+    // Amortize transposing the coefficients and histories over a full block.
+    const bool useBank = Rotate && !WithOctaveGEQ && numSamples >= 128 && !frozen && !useDampingMod
+                         && !shaperActive_ && !susLimMidCfg_.active && !susLimLowCfg_.active;
+#else
+    constexpr bool useBank = false;
+#endif
+    if (useBank) dampingBank.load (dampFilter_, lp.damping);
+
+    const bool batchReads = useBank && !useCoherent && !smearActive_ && delaysAllowBatch (lp);
+    float readBlock[kReadFrames][N];
+
     for (int i = 0; i < numSamples; ++i)
     {
         float inL = inputL[i];
@@ -598,68 +611,78 @@ void FDNReverbT<WithOctaveGEQ, N>::processLoop (const float* inputL, const float
         }
 
         float delayOut[N];
-        for (int ch = 0; ch < N; ++ch)
+        if (batchReads)
         {
-            auto& dl = delayLines_[ch];
-            float mod;
-            if (frozen)
-            {
-                mod = 0.0f;
-            }
-            else if (useDampingMod)
-            {
-                // ModulatedDamping: STATIC delay lines. Zero Doppler, no
-                // pitch warble, no harmonic stacking. All mod character
-                // comes from the damping coefficient lerp downstream.
-                mod = 0.0f;
-            }
-            else if (useCoherent)
-            {
-                // Phase pair offset: 0 for first half, π for second half.
-                // Intra-half spread: ch%8 × π/8 → 0, π/8, … 7π/8.
-                const float pairBase = (ch < N / 2) ? 0.0f : kPi;
-                const float spread   = static_cast<float> (ch % (N / 2)) * kHalfSpreadStep;
-                mod = coherentLfo_.read (pairBase + spread) * lp.modDepthScale[ch];
-            }
-            else
-            {
-                mod = lfos_[ch].next() * lp.modDepthScale[ch];
-            }
-            // Deep+slow mode-smear on top of mod. Advanced only when active AND not
-            // frozen → depth 0 keeps the read byte-exact (+0.0f is a no-op).
-            float smear = (smearActive_ && ! frozen) ? smearLfos_[ch].next() : 0.0f;
-            float readDelay = std::max (lp.delayLength[ch] + mod + smear, 1.0f);
-            float readPos = static_cast<float> (dl.writePos) - readDelay;
-
-            int intIdx = static_cast<int> (std::floor (readPos));
-            float frac = readPos - static_cast<float> (intIdx);
-
-            delayOut[ch] = DspUtils::cubicHermite (dl.buffer.data(), dl.mask, intIdx, frac);
+            const int frame = i % kReadFrames;
+            if (frame == 0)
+                readDiffusedBlock (lp, readBlock, std::min (kReadFrames, numSamples - i));
+            std::copy_n (readBlock[frame], N, delayOut);
         }
-
-        // --- 1.5) Inline allpass diffusion ---
-        if (lp.inlineDiffCoeff > 0.0f && ! frozen)
-        {
-            if (lp.useShortInlineAP)
-            {
-                for (int ch = 0; ch < N; ++ch)
-                    delayOut[ch] = inlineAPShort_[ch].process (delayOut[ch], lp.inlineDiffCoeff);
-            }
-            else
-            {
-                for (int ch = 0; ch < N; ++ch)
-                    delayOut[ch] = inlineAP_[ch].process (delayOut[ch], lp.inlineDiffCoeff);
-            }
-        }
-        if (! lp.useShortInlineAP && lp.inlineDiffCoeff2 > 0.0f && ! frozen)
+        else
         {
             for (int ch = 0; ch < N; ++ch)
-                delayOut[ch] = inlineAP2_[ch].process (delayOut[ch], lp.inlineDiffCoeff2);
-        }
-        if (lp.inlineDiffCoeff3 > 0.0f && ! frozen)
-        {
-            for (int ch = 0; ch < N; ++ch)
-                delayOut[ch] = inlineAP3_[ch].process (delayOut[ch], lp.inlineDiffCoeff3);
+            {
+                auto& dl = delayLines_[ch];
+                float mod;
+                if (frozen)
+                {
+                    mod = 0.0f;
+                }
+                else if (useDampingMod)
+                {
+                    // ModulatedDamping: STATIC delay lines. Zero Doppler, no
+                    // pitch warble, no harmonic stacking. All mod character
+                    // comes from the damping coefficient lerp downstream.
+                    mod = 0.0f;
+                }
+                else if (useCoherent)
+                {
+                    // Phase pair offset: 0 for first half, π for second half.
+                    // Intra-half spread: ch%8 × π/8 → 0, π/8, … 7π/8.
+                    const float pairBase = (ch < N / 2) ? 0.0f : kPi;
+                    const float spread   = static_cast<float> (ch % (N / 2)) * kHalfSpreadStep;
+                    mod = coherentLfo_.read (pairBase + spread) * lp.modDepthScale[ch];
+                }
+                else
+                {
+                    mod = lfos_[ch].next() * lp.modDepthScale[ch];
+                }
+                // Deep+slow mode-smear on top of mod. Advanced only when active AND not
+                // frozen → depth 0 keeps the read byte-exact (+0.0f is a no-op).
+                float smear = (smearActive_ && ! frozen) ? smearLfos_[ch].next() : 0.0f;
+                float readDelay = std::max (lp.delayLength[ch] + mod + smear, 1.0f);
+                float readPos = static_cast<float> (dl.writePos) - readDelay;
+
+                int intIdx = static_cast<int> (std::floor (readPos));
+                float frac = readPos - static_cast<float> (intIdx);
+
+                delayOut[ch] = DspUtils::cubicHermite (dl.buffer.data(), dl.mask, intIdx, frac);
+            }
+
+            // --- 1.5) Inline allpass diffusion ---
+            if (lp.inlineDiffCoeff > 0.0f && ! frozen)
+            {
+                if (lp.useShortInlineAP)
+                {
+                    for (int ch = 0; ch < N; ++ch)
+                        delayOut[ch] = inlineAPShort_[ch].process (delayOut[ch], lp.inlineDiffCoeff);
+                }
+                else
+                {
+                    for (int ch = 0; ch < N; ++ch)
+                        delayOut[ch] = inlineAP_[ch].process (delayOut[ch], lp.inlineDiffCoeff);
+                }
+            }
+            if (! lp.useShortInlineAP && lp.inlineDiffCoeff2 > 0.0f && ! frozen)
+            {
+                for (int ch = 0; ch < N; ++ch)
+                    delayOut[ch] = inlineAP2_[ch].process (delayOut[ch], lp.inlineDiffCoeff2);
+            }
+            if (lp.inlineDiffCoeff3 > 0.0f && ! frozen)
+            {
+                for (int ch = 0; ch < N; ++ch)
+                    delayOut[ch] = inlineAP3_[ch].process (delayOut[ch], lp.inlineDiffCoeff3);
+            }
         }
 
         // Phase ζ (2026-05-29): in-loop narrow-Q peaking PRE-Hadamard.
@@ -779,6 +802,8 @@ void FDNReverbT<WithOctaveGEQ, N>::processLoop (const float* inputL, const float
             }
         }
 
+        if (useBank) dampingBank.process (feedback);
+
         // --- 3) Three-band damping + input injection -> write to delay lines ---
         for (int ch = 0; ch < N; ++ch)
         {
@@ -844,7 +869,7 @@ void FDNReverbT<WithOctaveGEQ, N>::processLoop (const float* inputL, const float
             // stack-local lerpedCoeffs is passed by const-ref to process()
             // so the snapshot contract holds.
             float filtered;
-            if (frozen)
+            if (frozen || useBank)
             {
                 filtered = feedback[ch];
             }
@@ -1002,6 +1027,58 @@ void FDNReverbT<WithOctaveGEQ, N>::processLoop (const float* inputL, const float
                                  -kSafetyClip, kSafetyClip);
         outputR[i] = std::clamp (DspUtils::softClip (rawR, 1.0f, kSafetyClip),
                                  -kSafetyClip, kSafetyClip);
+    }
+    if (useBank) dampingBank.store (dampFilter_);
+}
+
+// Only pre-read independent samples. Account for the full modulation range
+// (a walk may still be leaving its previous depth) and cubic interpolation
+// neighbours on either side of the wrapped read head.
+template <bool WithOctaveGEQ, int N>
+bool FDNReverbT<WithOctaveGEQ, N>::delaysAllowBatch (const LiveParams& lp) const
+{
+    const float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
+    const float excursion = kMaxModDepth * kModSamplesPerUnit * rateRatio;
+    for (int ch = 0; ch < N; ++ch)
+    {
+        const float margin = excursion * lp.modDepthScale[ch] + 3.0f;
+        if (lp.delayLength[ch] < kReadFrames + margin || lp.delayLength[ch] + margin >= delayLines_[ch].mask)
+            return false;
+    }
+    return true;
+}
+
+template <bool WithOctaveGEQ, int N>
+void FDNReverbT<WithOctaveGEQ, N>::readDiffusedBlock (const LiveParams& lp,
+                                                      float (&out)[kReadFrames][N], int count)
+{
+    for (int ch = 0; ch < N; ++ch)
+    {
+        const auto& dl = delayLines_[ch];
+        float samples[kReadFrames];
+        lfos_[ch].nextBlock (samples, count);
+        for (int i = 0; i < count; ++i)
+        {
+            const float mod = samples[i] * lp.modDepthScale[ch];
+            const float delay = std::max (lp.delayLength[ch] + mod, 1.0f);
+            const float pos = static_cast<float> ((dl.writePos + i) & dl.mask) - delay;
+            const int index = static_cast<int> (std::floor (pos));
+            samples[i] = DspUtils::cubicHermite (dl.buffer.data(), dl.mask, index, pos - static_cast<float> (index));
+        }
+
+        const auto diffuse = [&] (InlineAllpass& ap, float gain)
+        {
+            for (int i = 0; i < count; ++i)
+                samples[i] = ap.process (samples[i], gain);
+        };
+        if (lp.inlineDiffCoeff > 0.0f)
+            diffuse (lp.useShortInlineAP ? inlineAPShort_[ch] : inlineAP_[ch], lp.inlineDiffCoeff);
+        if (!lp.useShortInlineAP && lp.inlineDiffCoeff2 > 0.0f)
+            diffuse (inlineAP2_[ch], lp.inlineDiffCoeff2);
+        if (lp.inlineDiffCoeff3 > 0.0f)
+            diffuse (inlineAP3_[ch], lp.inlineDiffCoeff3);
+        for (int i = 0; i < count; ++i)
+            out[i][ch] = samples[i];
     }
 }
 
@@ -1196,7 +1273,7 @@ void FDNReverbT<WithOctaveGEQ, N>::setCrossoverFreq (float hz)
 template <bool WithOctaveGEQ, int N>
 void FDNReverbT<WithOctaveGEQ, N>::setModDepth (float depth)
 {
-    modDepth_ = std::clamp (depth, 0.0f, 2.0f);
+    modDepth_ = std::clamp (depth, 0.0f, kMaxModDepth);
     if (prepared_)
         updateModDepth();
 }
@@ -2303,7 +2380,7 @@ template <bool WithOctaveGEQ, int N>
 void FDNReverbT<WithOctaveGEQ, N>::updateModDepth()
 {
     float rateRatio = static_cast<float> (sampleRate_ / kBaseSampleRate);
-    modDepthSamples_ = modDepth_ * 4.0f * rateRatio;
+    modDepthSamples_ = modDepth_ * kModSamplesPerUnit * rateRatio;
     for (int i = 0; i < N; ++i)
         lfos_[i].setDepth (modDepthSamples_);
 }

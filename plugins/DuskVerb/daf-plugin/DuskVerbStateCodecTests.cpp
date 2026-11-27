@@ -41,7 +41,9 @@ int main(int argc, char** argv)
         StateValues imported{}, restored{};
         CHECK(decodeUserPreset(text, imported));
         CHECK(imported.userName == "Big Drum Room Matched");
-        CHECK(imported.room == RoomVoicing::Matched && imported.presetName == kBigDrumRoomBase);
+        const auto* preset = factoryPresetByName(imported.presetName);
+        CHECK(imported.room == RoomVoicing::Factory && imported.presetName == "Big Drum Room"
+              && preset && preset->algorithm == kRoomAlgorithm && imported.params[Algorithm] == kRoomAlgorithm);
         CHECK(decodeState(encodeState(imported), restored) && same(imported, restored));
         return failures == 0 ? 0 : 1;
     }
@@ -49,6 +51,14 @@ int main(int argc, char** argv)
     CHECK(decodeState(encodeState(original), out) && same(original, out));
     CHECK(makeDefaultState().params[Bypass] == hostDefault(paramDesc(Bypass)));
     StateValues sentinel = sample(); sentinel.userName = "sentinel";
+    // A user file can have the same title as its former factory base.
+    // Restore its current factory identity while preserving the user's title and edits.
+    StateValues previous = original;
+    previous.presetName = previous.userName = "Screening Room";
+    StateValues renamed = previous;
+    renamed.presetName = "Theater Room";
+    CHECK(decodeUserPreset(encodeState(previous), out) && same(renamed, out));
+
     const std::string good = encodeState(original);
     CHECK(decodeUserPreset(good, out) && same(original, out));
     CHECK(decodeUserPreset("name=Header Name\n" + good, out) && out.userName == "Header Name");

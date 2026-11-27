@@ -71,7 +71,7 @@ public:
                 int cap = 1; while (cap < len_[b][l] + std::max (kMaxExc, sideReadHeadroom()) + 4) cap <<= 1;
                 buf_[b][l].assign (static_cast<size_t> (cap), 0.0f);
                 mask_[b][l] = cap - 1;
-                wp_[b][l] = 0;
+                wp_[b][l] = lineOffset (b, l) & mask_[b][l];
             }
         for (int b = 0; b < kBands; ++b)
             for (int l = 0; l < kLines; ++l)
@@ -395,147 +395,167 @@ public:
     void process (const float* inL, const float* inR, float* outL, float* outR, int n)
     {
         if (! prepared_) { std::fill (outL, outL + n, 0.0f); std::fill (outR, outR + n, 0.0f); return; }
-        for (int s = 0; s < n; ++s)
+        // Each band's feedback and filters are independent. Keep one band's delay
+        // lines hot for a short span before visiting the next; preserve the mix order.
+#if defined(DUSKVERB2_OPTIMIZED_DSP)
+        constexpr int tile = 32;
+#else
+        constexpr int tile = 1;
+#endif
+        for (int at = 0; at < n; at += tile)
         {
-            lfoPh_ += lfoInc_; if (lfoPh_ > 6.2831853f) lfoPh_ -= 6.2831853f;
-            const float wob = std::sin (lfoPh_);
-
-            // Sustain-band limiter input-presence key (one per instance/sample).
-            bool susPresent = false;
-            if (susLimAnyActive_ && ! frozen_)
-                susPresent = susLimKey_.advance (std::fabs (inL[s]) + std::fabs (inR[s]));
-
-            // Complementary band split, per channel.
-            float bandsL[kBands], bandsR[kBands];
-            splitBands (inL[s], 0, bandsL);
-            splitBands (inR[s], 1, bandsR);
-
-            float oL = 0.0f, oR = 0.0f;
+            const int count = std::min (tile, n - at);
+            float bandsL[tile][kBands], bandsR[tile][kBands], wob[tile];
+            bool present[tile] {};
+            for (int s = 0; s < count; ++s)
+            {
+                lfoPh_ += lfoInc_; if (lfoPh_ > 6.2831853f) lfoPh_ -= 6.2831853f;
+                wob[s] = std::sin (lfoPh_);
+                if (susLimAnyActive_ && ! frozen_)
+                    present[s] = susLimKey_.advance (std::fabs (inL[at + s]) + std::fabs (inR[at + s]));
+                splitBands (inL[at + s], 0, bandsL[s]);
+                splitBands (inR[at + s], 1, bandsR[s]);
+            }
+            std::fill_n (outL + at, count, 0.0f);
+            std::fill_n (outR + at, count, 0.0f);
             for (int b = 0; b < kBands; ++b)
             {
-                // per-band gentle wander (bands 2+ only — static lows kill the
-                // mod-sideband sub-skirt smear).
-                const float exc = (b >= 2) ? wob * kExcSamp[b] : 0.0f;
+                for (int s = 0; s < count; ++s)
+                {
+                    const auto clock = apClock_ + static_cast<std::uint32_t> (s);
+                    // per-band gentle wander (bands 2+ only — static lows kill the
+                    // mod-sideband sub-skirt smear).
+                    const float exc = (b >= 2) ? wob[s] * kExcSamp[b] : 0.0f;
 
-                // 8-line mini-FDN: read (modulated), Hadamard-8, damp+gain, write.
-                // Each line gets its OWN deep+slow mode-smear excursion (fully
-                // decorrelated → strong median fill). Advanced only when active →
-                // depth 0 leaves the read at the un-smeared exc → bit-null.
-                float x[kLines];
-                if ((! smearActive_ || smearBandShare_[b] == 0.0f) && kExcSamp[b] == 0.0f)
-                {
-                    for (int l = 0; l < kLines; ++l)
+                    // 8-line mini-FDN: read (modulated), Hadamard-8, damp+gain, write.
+                    // Each line gets its OWN deep+slow mode-smear excursion (fully
+                    // decorrelated → strong median fill). Advanced only when active →
+                    // depth 0 leaves the read at the un-smeared exc → bit-null.
+                    float x[kLines];
+                    if ((! smearActive_ || smearBandShare_[b] == 0.0f) && kExcSamp[b] == 0.0f)
                     {
-                        // Keep the modulation phase continuous if this band is enabled later.
-                        if (smearActive_) smearLfo_[b][l].advance();
-                        x[l] = readInteger (b, l, len_[b][l]);
+                        for (int l = 0; l < kLines; ++l)
+                        {
+                            // Keep the modulation phase continuous if this band is enabled later.
+                            if (smearActive_) smearLfo_[b][l].advance();
+                            x[l] = readInteger (b, l, len_[b][l]);
+                        }
                     }
-                }
-                else
-                {
-                    for (int l = 0; l < kLines; ++l)
+                    else
                     {
-                        const float base = (l & 1) ? -exc : exc;
-                        const float sm   = smearActive_ ? smearLfo_[b][l].next() : 0.0f;
-                        x[l] = readLine (b, l, base + sm);
+                        for (int l = 0; l < kLines; ++l)
+                        {
+                            const float base = (l & 1) ? -exc : exc;
+                            const float sm   = smearActive_ ? smearLfo_[b][l].next() : 0.0f;
+                            x[l] = readLine (b, l, base + sm);
+                        }
                     }
-                }
-                // inject band input into lines 0/1 (L) and 2/3 (R), sign-alternated
-                x[0] += bandsL[b]; x[1] -= bandsL[b];
-                x[2] += bandsR[b]; x[3] -= bandsR[b];
-                hadamard8 (x);
-                // Sustain-band limiter: per-band gDyn on the decay gain, same-sample
-                // detector from the post-Hadamard line energy (the CHARGE). Slot 0 takes
-                // the ORIGINAL loop verbatim — branching AROUND the hot loop (not inside
-                // it) keeps its codegen/FP-contraction untouched → bit-null (the
-                // gb-local variant measurably drifted; see the bitnull-codegen memory).
-                if (susLimSlot_[b] == 0 || frozen_)
-                {
-                    for (int l = 0; l < kLines; ++l)
+                    // inject band input into lines 0/1 (L) and 2/3 (R), sign-alternated
+                    x[0] += bandsL[s][b]; x[1] -= bandsL[s][b];
+                    x[2] += bandsR[s][b]; x[3] -= bandsR[s][b];
+                    hadamard8 (x);
+                    // Sustain-band limiter: per-band gDyn on the decay gain, same-sample
+                    // detector from the post-Hadamard line energy (the CHARGE). Slot 0 takes
+                    // the ORIGINAL loop verbatim — branching AROUND the hot loop (not inside
+                    // it) keeps its codegen/FP-contraction untouched → bit-null (the
+                    // gb-local variant measurably drifted; see the bitnull-codegen memory).
+                    if (susLimSlot_[b] == 0 || frozen_)
                     {
-                        // in-loop damping is unnecessary per band (the band IS the
-                        // spectral slice); just the decay gain + densifier APs.
-                        float v = x[l] * g_[b];
-                        v = allpass (b, l, 0, v);
-                        v = allpass (b, l, 1, v);
-                        if (kAllpassDelays[b][2] != 0) v = allpass (b, l, 2, v);
-                        writeLine (b, l, v);
+                        for (int l = 0; l < kLines; ++l)
+                        {
+                            // in-loop damping is unnecessary per band (the band IS the
+                            // spectral slice); just the decay gain + densifier APs.
+                            float v = x[l] * g_[b];
+                            v = allpass (b, l, 0, v, clock);
+                            v = allpass (b, l, 1, v, clock);
+                            if (kAllpassDelays[b][2] != 0) v = allpass (b, l, 2, v, clock);
+                            writeLine (b, l, v);
+                        }
                     }
-                }
-                else
-                {
-                    const auto& cfg = (susLimSlot_[b] == 1) ? susLimMidCfg_ : susLimLowCfg_;
-                    float mag = 0.0f;
-                    for (int l = 0; l < kLines; ++l) mag += std::fabs (x[l]);
-                    const float red = susLimDet_[b].advance (mag * (1.0f / 8.0f), cfg, susPresent);
-                    const float gb  = g_[b] * (1.0f - red);
-                    for (int l = 0; l < kLines; ++l)
+                    else
                     {
-                        float v = x[l] * gb;
-                        v = allpass (b, l, 0, v);
-                        v = allpass (b, l, 1, v);
-                        if (kAllpassDelays[b][2] != 0) v = allpass (b, l, 2, v);
-                        writeLine (b, l, v);
+                        const auto& cfg = (susLimSlot_[b] == 1) ? susLimMidCfg_ : susLimLowCfg_;
+                        float mag = 0.0f;
+                        for (int l = 0; l < kLines; ++l) mag += std::fabs (x[l]);
+                        const float red = susLimDet_[b].advance (mag * (1.0f / 8.0f), cfg, present[s]);
+                        const float gb  = g_[b] * (1.0f - red);
+                        for (int l = 0; l < kLines; ++l)
+                        {
+                            float v = x[l] * gb;
+                            v = allpass (b, l, 0, v, clock);
+                            v = allpass (b, l, 1, v, clock);
+                            if (kAllpassDelays[b][2] != 0) v = allpass (b, l, 2, v, clock);
+                            writeLine (b, l, v);
+                        }
                     }
+                    // band output taps: decorrelated L/R combinations across four
+                    // lines each (incl. two feedback-only lines: denser output),
+                    // confined to the band's own range (leak-rings-long defect).
+                    float bl = bandFilter (b, 0, 0.35355339f * (x[0] - x[3] + x[5] - x[6]));
+                    float br = bandFilter (b, 1, 0.35355339f * (x[2] - x[1] + x[7] - x[4]));
+                    // Stereo image bias (setStereoImageBias) — issue #123. Appended
+                    // rather than folded into the two taps above: this target builds
+                    // -O3 -ffast-math, so touching the statements of the hot loop moves
+                    // the disabled output too (same lesson as the gb-local variant
+                    // noted above, and as the DenseHall port of this feature). Off ⇒
+                    // never entered, and nothing above it changed ⇒ bit-identical.
+                    if (stereoBiasActive_)
+                    {
+                        // ½p3 recovered by inverse Hadamard (the butterfly is its own
+                        // inverse up to the 1/sqrt8 it already applied), then run
+                        // through the band's own confinement filter with private state
+                        // so it lands inside the band exactly like the taps do.
+                        const float dRaw = 0.17677670f * (x[0] - x[1] - x[2] + x[3]
+                                                        + x[4] - x[5] - x[6] + x[7]);
+                        const float dF = biasBandFilter (b, dRaw);
+                        // bandFilter is linear with per-channel state, so the filtered
+                        // mid and side come straight out of the two taps above.
+                        const float midF  = 0.5f * (bl + br);
+                        const float sideF = 0.5f * (bl - br);
+                        const float sNew  = biasCos_ * sideF + biasSin_ * dF;
+                        bl = midF + sNew;
+                        br = midF - sNew;
+                    }
+                    // Decorrelated side (setDecorrelatedSide), appended for the same
+                    // reason as the bias above: the side becomes line 1's read taken
+                    // sideReadOffset_ samples further back (the write above has already
+                    // advanced the line, hence its +1), filtered like the taps; the mid
+                    // is kept as the taps made it.
+                    if (decorrelatedSide_)
+                    {
+                        const float midF  = 0.5f * (bl + br);
+                        const float sideF = sideBandFilter (b, 0.5f * readInteger (b, 1, len_[b][1] + sideReadOffset_[b]));
+                        bl = midF + sideF;
+                        br = midF - sideF;
+                    }
+                    // feed-forward direct (EDT/front-load, outside the loop —
+                    // unfiltered: it is already band-split and must stay
+                    // phase-tight for EDT shaping)
+                    bl += direct_[b] * bandsL[s][b];
+                    br += direct_[b] * bandsR[s][b];
+                    // per-band width (M/S) + decoupled output level
+                    const float m = 0.5f * (bl + br), sd = 0.5f * (bl - br) * width_[b];
+                    outL[at + s] += level_[b] * (m + sd);
+                    outR[at + s] += level_[b] * (m - sd);
                 }
-                // band output taps: decorrelated L/R combinations across four
-                // lines each (incl. two feedback-only lines: denser output),
-                // confined to the band's own range (leak-rings-long defect).
-                float bl = bandFilter (b, 0, 0.35355339f * (x[0] - x[3] + x[5] - x[6]));
-                float br = bandFilter (b, 1, 0.35355339f * (x[2] - x[1] + x[7] - x[4]));
-                // Stereo image bias (setStereoImageBias) — issue #123. Appended
-                // rather than folded into the two taps above: this target builds
-                // -O3 -ffast-math, so touching the statements of the hot loop moves
-                // the disabled output too (same lesson as the gb-local variant
-                // noted above, and as the DenseHall port of this feature). Off ⇒
-                // never entered, and nothing above it changed ⇒ bit-identical.
-                if (stereoBiasActive_)
-                {
-                    // ½p3 recovered by inverse Hadamard (the butterfly is its own
-                    // inverse up to the 1/sqrt8 it already applied), then run
-                    // through the band's own confinement filter with private state
-                    // so it lands inside the band exactly like the taps do.
-                    const float dRaw = 0.17677670f * (x[0] - x[1] - x[2] + x[3]
-                                                    + x[4] - x[5] - x[6] + x[7]);
-                    const float dF = biasBandFilter (b, dRaw);
-                    // bandFilter is linear with per-channel state, so the filtered
-                    // mid and side come straight out of the two taps above.
-                    const float midF  = 0.5f * (bl + br);
-                    const float sideF = 0.5f * (bl - br);
-                    const float sNew  = biasCos_ * sideF + biasSin_ * dF;
-                    bl = midF + sNew;
-                    br = midF - sNew;
-                }
-                // Decorrelated side (setDecorrelatedSide), appended for the same
-                // reason as the bias above: the side becomes line 1's read taken
-                // sideReadOffset_ samples further back (the write above has already
-                // advanced the line, hence its +1), filtered like the taps; the mid
-                // is kept as the taps made it.
-                if (decorrelatedSide_)
-                {
-                    const float midF  = 0.5f * (bl + br);
-                    const float sideF = sideBandFilter (b, 0.5f * readInteger (b, 1, len_[b][1] + sideReadOffset_[b]));
-                    bl = midF + sideF;
-                    br = midF - sideF;
-                }
-                // feed-forward direct (EDT/front-load, outside the loop —
-                // unfiltered: it is already band-split and must stay
-                // phase-tight for EDT shaping)
-                bl += direct_[b] * bandsL[b];
-                br += direct_[b] * bandsR[b];
-                // per-band width (M/S) + decoupled output level
-                const float m = 0.5f * (bl + br), sd = 0.5f * (bl - br) * width_[b];
-                oL += level_[b] * (m + sd);
-                oR += level_[b] * (m - sd);
             }
-            ++apClock_;
-            outL[s] = oL;
-            outR[s] = oR;
+            apClock_ += static_cast<std::uint32_t> (count);
         }
     }
 
 private:
     static constexpr int kLines  = 8;
+    // Simultaneous writes to power-of-two rings otherwise compete for the same cache sets.
+    static constexpr int lineOffset (int band, int line) noexcept
+    {
+#if defined(DUSKVERB2_OPTIMIZED_DSP)
+        return 32 * (band * kLines + line);
+#else
+        (void) band;
+        (void) line;
+        return 0;
+#endif
+    }
     static constexpr int kMaxExc = 272;   // was 16; headroom for the deep mode-smear excursion (clamped ≤256)
     static constexpr float kExcSamp[kBands] = { 0.0f, 0.0f, 1.5f, 2.0f, 0.0f, 0.0f };   // 2026-07-04 b4/b5 4,5 -> 2,1; 2026-07-06 -> 0,0: ANY wander through LINEAR-interp reads is a per-pass HF loss (measured: 8k realized -24% below command even at ±2 samples). exc==0 takes integer reads (fr=0) = zero interp loss; the top bands are noise-like and need no wander. b2/b3 2,3 -> 1.5,2 with the 8-line tanks: 8 modulated lines pushed tail mod-ripple over gate (+1.6/+1.9 dB).
 
@@ -586,23 +606,34 @@ private:
         // no longer bleeds HF the way the old linear interp did). At exc=0 the read is
         // integer (fr=0) and cubic Hermite returns the exact sample, so this is
         // byte-identical to the previous linear read for the un-smeared (exc=0) path.
-        const float rpos = static_cast<float> (wp_[b][l]) - (static_cast<float> (len_[b][l]) + exc);
+        const int offset = lineOffset (b, l);
+#if defined(DUSKVERB2_OPTIMIZED_DSP)
+        const int logicalWrite = (wp_[b][l] - offset) & mask_[b][l];
+#else
+        const int logicalWrite = wp_[b][l];
+#endif
+        const float rpos = static_cast<float> (logicalWrite) - (static_cast<float> (len_[b][l]) + exc);
         // Truncation equals floor except at negative fractional positions.
         const int truncated = static_cast<int> (rpos);
         const int i0 = truncated - (static_cast<float> (truncated) > rpos);
         const float fr   = rpos - static_cast<float> (i0);
-        return DspUtils::cubicHermite (buf_[b][l].data(), mask_[b][l], i0, fr);
+        return DspUtils::cubicHermite (buf_[b][l].data(), mask_[b][l], i0 + offset, fr);
     }
     void writeLine (int b, int l, float v)
     {
         buf_[b][l][static_cast<size_t> (wp_[b][l])] = v;
         wp_[b][l] = (wp_[b][l] + 1) & mask_[b][l];
     }
-    float allpass (int b, int l, int a, float v)
+    float allpass (int b, int l, int a, float v, std::uint32_t sampleClock)
     {
         auto& bufr = apBuf_[b][l][a];
         const int m = apMask_[b][l][a];
-        const int w = static_cast<int> (apClock_ & static_cast<std::uint32_t> (m));
+#if defined(DUSKVERB2_OPTIMIZED_DSP)
+        const auto clock = sampleClock + static_cast<std::uint32_t> (lineOffset (b, l) * kAps + 32 * a);
+#else
+        const auto clock = sampleClock;
+#endif
+        const int w = static_cast<int> (clock & static_cast<std::uint32_t> (m));
         const float d = bufr[static_cast<size_t> ((w - apLen_[b][l][a]) & m)];
         const float k = apCoeff_[b];
         const float y = d - k * v;

@@ -2,6 +2,7 @@
 // DuskVerb's real-editor checks, run by the shared CLAP/X11 drag fixture.
 #pragma once
 #include "../core/DuskVerbParamTable.hpp"
+#include "../core/DuskVerbPresets.hpp"
 #include "clap/ext/state.h"
 #include <X11/keysym.h>
 #include <algorithm>
@@ -86,7 +87,20 @@ static bool extraUiChecks(Fixture& fx, const clap_plugin_t* plugin,
 
     click(1076, 724); // BUS
     click(1076, 770); // MIX LOCK
-    for (int i = 0; i < 24; ++i) click(569.5f, 24);
+    // The chevrons clamp at the ends of the bank: forward past the last program, then back to
+    // the last nonlinear one, so every factory sound is passed in both directions.
+    const auto& bank = duskverb::dv2FactoryPresets();
+    const int count = static_cast<int>(bank.size());
+    for (int i = 0; i < count; ++i) click(569.5f, 24);
+    if (!check(value(duskverb::Algorithm) == duskverb::resolveAlgorithm(bank.back().algorithm)
+               && snapshot().find(bank.back().name) != std::string::npos,
+               "the last factory sound is reachable")) return false;
+    int lastNonlinear = -1;
+    for (int i = 0; i < count; ++i)
+        if (duskverb::resolveAlgorithm(bank[static_cast<size_t>(i)].algorithm) == duskverb::kNonLinAlgorithm)
+            lastNonlinear = i;
+    if (!check(lastNonlinear >= 0, "the bank holds the nonlinear presets")) return false;
+    for (int i = count - 1; i > lastNonlinear; --i) click(350.5f, 24);
     if (!check(value(duskverb::Algorithm) == duskverb::kNonLinAlgorithm
                && snapshot().find("Nonlinear Huge") != std::string::npos,
                "all factory sounds, including the nonlinear presets, remain reachable")) return false;

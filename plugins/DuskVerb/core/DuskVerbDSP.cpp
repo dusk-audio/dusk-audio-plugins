@@ -56,7 +56,7 @@ DuskVerbDSP::DuskVerbDSP (const EarlyFieldConfig* earlyFieldOverride, const Octa
     // table would measure the wrong thing.
     else if (const char* env = std::getenv ("DUSKVERB2_EARLYFIELD"); env != nullptr && env[0] != '\0')
     {
-        char text[512];
+        char text[1024];
         if (parseEarlyFieldConfig (env, earlyFieldOverride_, text, sizeof (text)))
         {
             hasEarlyFieldOverride_ = true;
@@ -310,6 +310,7 @@ void DuskVerbDSP::prepare (double sampleRate, int samplesPerBlock)
         {
             own->nonLin.prepare (sampleRate, safeBlockSize);
             own->sections.prepare (sampleRate);
+            own->plate.prepare (sampleRate);
             own->shell.prepare (sampleRate);
         }
         scalerA_.prepare (sampleRate);
@@ -384,8 +385,8 @@ void DuskVerbDSP::prepare (double sampleRate, int samplesPerBlock)
         room_ = *pending;
     if (auto* preset = lastAppliedPreset_.load (std::memory_order_acquire))
     {
-        preset->applyEngineConfig (engineA_);
-        preset->applyEngineConfig (engineB_);
+        preset->applyEngineConfig (engineA_, true);
+        preset->applyEngineConfig (engineB_, true);
         // The config re-install resets what the patch sets over it (the PMB band table), so
         // the patch goes back on too, in the swap's order: before the scalers capture.
         applyEnginePatch (engineA_, preset);
@@ -428,6 +429,8 @@ void DuskVerbDSP::clearState() noexcept
             continue;
         if (isSectionAlgorithm (own->algorithm))
             own->sections.clear();
+        else if (own->algorithm == kCompactPlateAlgorithm)
+            own->plate.clear();
         else
             own->nonLin.clear();
         own->shell.clear();
@@ -774,7 +777,8 @@ void DuskVerbDSP::armOwnVoice (const DuskVerbEngine* engine, bool own) noexcept
         else
         {
             voice.sectionRow = nullptr;
-            voice.nonLin.clear();
+            if (voice.algorithm == kCompactPlateAlgorithm) voice.plate.clear();
+            else voice.nonLin.clear();
         }
         voice.sectionsConfigured = false;
         voice.shell.clear();
@@ -799,23 +803,23 @@ static_assert (NonLinBurstEngine::kMaxDecaySeconds == kNonLinMaxDecaySeconds,
 void DuskVerbDSP::pushOwnParameters (OwnVoice& voice, float preDelayMs, float toneTreble, float toneHiCut) noexcept
 {
     if (isSectionAlgorithm (voice.algorithm))
-    {
         pushSectionParameters (voice, preDelayMs, toneTreble);
-        pushShellParameters (voice.shell, toneHiCut);
-        if (voice.needsSnap)
-        {
-            voice.shell.snap();
-            voice.needsSnap = false;
-        }
-        return;
+    else if (voice.algorithm == kCompactPlateAlgorithm)
+    {
+        // A named recall uses its calibrated engine decay. A manually selected
+        // plate starts from the same knob scale without borrowing another preset's calibration.
+        const float decayRatio = decayAlgorithm_ == voice.algorithm ? engineDecay() / decayEngine_
+                                                                    : p (Decay) / vocalplate::shownDecay;
+        voice.plate.set ({preDelayMs, decayRatio, p (Size), p (Diffusion), p (ErLevel), p (ErSize),
+                          p (ModDepth), p (ModRate), p (BassMult), p (MidMult), p (Damping) * toneTreble,
+                          p (Crossover), p (HighCrossover), p (Freeze) >= 0.5f});
     }
-    // The shared controls keep the meaning they have on every engine: Decay is the
-    // time to -60 dB, Treble Multiply under 1 darkens (the Tone macro folded in as
-    // for the shared engines), then Pre-Delay, Lo Cut, Hi Cut and its shelf depth,
-    // Width and the output trim. The rest have no counterpart in this engine.
-    voice.nonLin.setKnee (NonLinBurstEngine::kneeForDecaySeconds (engineDecay()));
-    voice.nonLin.setHfDamp (NonLinBurstEngine::hfDampHzForTreble (p (Damping) * toneTreble));
-    voice.nonLin.setPreDelay (preDelayMs);
+    else
+    {
+        voice.nonLin.setKnee (NonLinBurstEngine::kneeForDecaySeconds (engineDecay()));
+        voice.nonLin.setHfDamp (NonLinBurstEngine::hfDampHzForTreble (p (Damping) * toneTreble));
+        voice.nonLin.setPreDelay (preDelayMs);
+    }
     pushShellParameters (voice.shell, toneHiCut);
     if (voice.needsSnap)
     {
@@ -826,7 +830,11 @@ void DuskVerbDSP::pushOwnParameters (OwnVoice& voice, float preDelayMs, float to
 
 static_assert (static_cast<int> (SectionReverbModel::Room) == sectionModelFor (kRoomAlgorithm)
                && static_cast<int> (SectionReverbModel::Chamber) == sectionModelFor (kChamberAlgorithm)
-               && static_cast<int> (SectionReverbModel::VintagePlate) == sectionModelFor (kSectionPlateAlgorithm),
+               && static_cast<int> (SectionReverbModel::VintagePlate) == sectionModelFor (kSectionPlateAlgorithm)
+               && static_cast<int> (SectionReverbModel::Hall) == sectionModelFor (kSectionHallAlgorithm)
+               && static_cast<int> (SectionReverbModel::StudioPlate) == sectionModelFor (kStudioPlateAlgorithm)
+               && static_cast<int> (SectionReverbModel::ModulatedHall) == sectionModelFor (kModulatedHallAlgorithm)
+               && static_cast<int> (SectionReverbModel::Auditorium) == sectionModelFor (kAuditoriumAlgorithm),
                "each section algorithm plays its own model");
 
 void DuskVerbDSP::pushSectionParameters (OwnVoice& voice, float preDelayMs, float toneTreble) noexcept
@@ -845,23 +853,49 @@ void DuskVerbDSP::pushSectionParameters (OwnVoice& voice, float preDelayMs, floa
     // The decay time goes with how far the reverb time sits above the table's shortest step, so
     // Decay scales that span: double Decay, double the tail.
     const float shortest = SectionReverbEngine::rtSecondsForStep (model, 0);
-    c.reverbTime = shortest + (c.reverbTime - shortest) * ratio (engineDecay(), row.decay);
+    const float decayRatio = ratio (engineDecay(), row.decay);
+    c.reverbTime = shortest + (c.reverbTime - shortest) * decayRatio;
     c.sizeMeters *= std::exp2 (2.0f * (p (Size) - row.size));
     c.rtHiCutHz *= ratio (p (Damping) * toneTreble, row.damping);
     c.bassRt *= ratio (p (BassMult), row.bassMult);
     c.bassXoverHz *= ratio (p (Crossover), row.crossover);
     c.wanderMs = follow (c.wanderMs, p (ModDepth), row.modDepth, 24.0f);
     c.spinHz = follow (c.spinHz, p (ModRate), row.modRate, 4.0f);
+    if (model == static_cast<int>(SectionReverbModel::Auditorium))
+    {
+        c.chorusDepth = follow(c.chorusDepth, p(ModDepth), row.modDepth, 100.0f);
+        c.chorusRate = follow(c.chorusRate, p(ModRate), row.modRate, 1.0f);
+    }
     c.diffusion += 100.0f * (p (Diffusion) - row.diffusion);
     c.earlyLevelDb += 20.0f * std::log10 (std::max (p (ErLevel), 1.0e-3f) / std::max (row.erLevel, 1.0e-3f));
     if (model == static_cast<int> (SectionReverbModel::Room))
     {
         c.earlyPredelayMs += preDelayMs - row.predelayMs;
         c.roomScale *= (0.25f + p (ErSize)) / (0.25f + row.erSize);
+        // At the minimum feedback step the audible tail is one pass through the room.
+        // Shorten the reflection and tank delays below recall, open the loop above it.
+        if (row.config.reverbTime < SectionReverbEngine::rtSecondsForStep (model, 1))
+        {
+            if (row.tuneEarlyBass)
+            {
+                // A single-pass room has no feedback decay to colour. Use its input bass shelf.
+                c.roomBassBoostDb += 6.0f * std::log2(ratio(p(BassMult), row.bassMult));
+                c.roomBassXoverHz *= ratio(p(Crossover), row.crossover);
+            }
+            const float shorter = std::min (1.0f, decayRatio);
+            c.roomScale *= shorter;
+            c.sizeMeters *= shorter;
+            c.reverbTime = row.config.reverbTime + std::max (0.0f, engineDecay() - row.decay);
+        }
+        // In Tiled Room the forward reflection pattern carries the whole audible decay.
+        if (! c.reverse && c.reverbLevelDb <= -96.0f)
+            c.roomScale *= decayRatio;
     }
     else
     {
         c.predelayMs += preDelayMs - row.predelayMs;
+        if (model == static_cast<int>(SectionReverbModel::Auditorium))
+            c.reflectionTimePercent += 100.0f * (p(ErSize) - row.erSize);
         c.spread = follow (c.spread, 0.25f + p (ErSize), 0.25f + row.erSize, 100.0f);
     }
     // The engine clamps and rounds every value to its range.
@@ -891,14 +925,24 @@ const EarlyFieldConfig& DuskVerbDSP::earlyFieldConfigFor (const FactoryPreset* p
 {
     if (preset == nullptr)
         return kNoEarlyField;          // no preset identity: neutral, like the engine config
-    return hasEarlyFieldOverride_ ? earlyFieldOverride_ : earlyFieldFor (preset->name);
+    if (hasEarlyFieldOverride_)
+        return earlyFieldOverride_;
+    if (algorithm() == kCompactPlateAlgorithm) return kNoEarlyField;
+    if (const auto* legacy = legacyPresetVoicingFor (preset->name, algorithm()))
+        return legacy->earlyField;
+    return earlyFieldFor (preset->name);
 }
 
 const OctaveTrimGains& DuskVerbDSP::octaveTrimGainsFor (const FactoryPreset* preset) const noexcept
 {
     if (preset == nullptr)
         return kFlatOctaveTrim;        // no preset identity: flat, as the early field is none
-    return hasOctaveTrimOverride_ ? octaveTrimOverride_ : octaveTrimFor (preset->name);
+    if (hasOctaveTrimOverride_)
+        return octaveTrimOverride_;
+    if (algorithm() == kCompactPlateAlgorithm) return kFlatOctaveTrim;
+    if (const auto* legacy = legacyPresetVoicingFor (preset->name, algorithm()))
+        return legacy->octaveTrim;
+    return octaveTrimFor (preset->name);
 }
 
 const BandLimitSetting& DuskVerbDSP::bandLimitSettingFor (const FactoryPreset* preset) const noexcept
@@ -913,7 +957,16 @@ const StereoBands::Gains& DuskVerbDSP::stereoBandsFor (const FactoryPreset* pres
 {
     if (preset == nullptr)
         return StereoBands::kOff;      // no preset identity: no stage, like the field and the trim
-    return hasStereoBandsOverride_ ? stereoBandsOverride_ : enginePatchFor (preset->name).stereoBands;
+    return hasStereoBandsOverride_ ? stereoBandsOverride_ : enginePatchOf (preset).stereoBands;
+}
+
+const EnginePatch& DuskVerbDSP::enginePatchOf (const FactoryPreset* preset) const noexcept
+{
+    if (preset == nullptr)
+        return kNoEnginePatch;
+    if (const auto* legacy = legacyPresetVoicingFor (preset->name, algorithm()); legacy != nullptr && legacy->enginePatch != nullptr)
+        return *legacy->enginePatch;
+    return enginePatchFor (preset->name);
 }
 
 void DuskVerbDSP::applyEnginePatch (DuskVerbEngine& engine, const FactoryPreset* preset) noexcept
@@ -930,16 +983,28 @@ void DuskVerbDSP::applyEnginePatch (DuskVerbEngine& engine, const FactoryPreset*
     // Gain automation uses the same band centre and Q as prepare and preset recall.
     const bool sweptEq = resolvePteqFreqQ (preset ? preset->name : "", pteqBandFreq_, pteqBandQ_);
     if (preset && !sweptEq)
-        for (const auto& band : kTankTrebleEq)
-            if (band.name == preset->name)
-            {
-                pteqBandFreq_[3] = band.hz;
-                pteqBandQ_[3] = band.q;
-                engine.setPostTankEQBand (3, band.hz, band.q, band.gainDb);
-                break;
-            }
+    {
+        const TankTrebleEq* treble = nullptr;
+        if (const auto* legacy = legacyPresetVoicingFor (preset->name, algorithm()); legacy != nullptr && legacy->tankTreble != nullptr)
+            treble = legacy->tankTreble;
+        else
+            for (const auto& band : kTankTrebleEq)
+                if (band.name == preset->name)
+                {
+                    treble = &band;
+                    break;
+                }
+        if (treble != nullptr)
+        {
+            pteqBandFreq_[3] = treble->hz;
+            pteqBandQ_[3] = treble->q;
+            engine.setPostTankEQBand (3, treble->hz, treble->q, treble->gainDb);
+        }
+    }
 
-    const EnginePatch& patch = preset != nullptr ? enginePatchFor (preset->name) : kNoEnginePatch;
+    const EnginePatch& patch = enginePatchOf (preset);
+    if (patch.tankDelayMs > 0.0f)
+        applyTankOnsetDelay (engine, patch.tankDelayMs);
     const bool side = preset != nullptr && pmbSideOverride_ >= 0 ? pmbSideOverride_ == 1 : patch.pmbDecorrelatedSide;
     engine.setPmbDecorrelatedSide (side);
     engine.setSparseERTone (preset != nullptr && sparseERLpOverride_ >= 0.0f ? sparseERLpOverride_ : patch.sparseERLowpassHz);
@@ -1056,6 +1121,11 @@ void DuskVerbDSP::installDecayCalibration (const FactoryPreset* preset) noexcept
 {
     const float* shown = preset != nullptr ? decayShownFor (preset->name) : nullptr;
     decayAlgorithm_ = shown != nullptr ? resolveAlgorithm (preset->algorithm) : -1;
+    if (const auto* legacy = preset != nullptr ? legacyPresetVoicingFor (preset->name, algorithm()) : nullptr)
+    {
+        shown = legacy->shownDecay > 0.0f ? &legacy->shownDecay : nullptr;
+        decayAlgorithm_ = shown != nullptr ? static_cast<int> (legacy->algorithm) : -1;
+    }
     if (shown == nullptr)
         return;
     const ParamDesc& d = paramDesc (Decay);
@@ -1081,6 +1151,7 @@ void DuskVerbDSP::installEarlyField (const DuskVerbEngine* engine, const Factory
     // that state over when the outgoing one played none: a reload of the same preset then
     // renders the very samples the outgoing field does, and their crossfade changes nothing.
     FieldVoice& voice = fieldFor (engine);
+    voice.monoShimmerInput = preset && std::string_view (preset->name) == "Black Hole";
     auto config = earlyFieldConfigFor (preset);
     if (!hasEarlyFieldOverride_ && room_ != RoomVoicing::Factory && preset && preset->name == kBigDrumRoomBase)
     {
@@ -1118,13 +1189,21 @@ void DuskVerbDSP::renderWet (DuskVerbEngine* engine, float* left, float* right, 
     {
         // The field's pre path feeds the engine, whose output stage then covers it; its post
         // path is added after the preset crossfade (addEarlyFields).
-        if (const EarlyField& field = fieldFor (engine).field; field.enabled())
+        const FieldVoice& voice = fieldFor (engine);
+        if (const EarlyField& field = voice.field; field.enabled())
             field.preEngine (earlyInput_, left, right, numSamples);
+        // Black Hole sums into its tank. The injector uses the same taps on both channels,
+        // so averaging here also sums its delayed input. The dry path was saved earlier.
+        if (voice.usesMonoInput (*engine))
+            for (int i = 0; i < numSamples; ++i)
+                left[i] = right[i] = 0.5f * (left[i] + right[i]);
         engine->process (left, right, numSamples);
         return;
     }
     if (isSectionAlgorithm (own.algorithm))
         own.sections.process (left, right, left, right, numSamples);
+    else if (own.algorithm == kCompactPlateAlgorithm)
+        own.plate.process (left, right, numSamples);
     else
         own.nonLin.process (left, right, left, right, numSamples);
     own.shell.process (left, right, numSamples);
@@ -1137,14 +1216,15 @@ void DuskVerbDSP::addEarlyFields (float* left, float* right, int numSamples,
     const bool out = fadingOut != nullptr && fieldPostPlays (fadingOut);
     if (! in && ! out)
         return;                                    // no field: the wet is the engines' alone
-    const auto render = [this, numSamples] (FieldVoice& voice, std::vector<float>& l, std::vector<float>& r) {
-        voice.field.renderPost (earlyInput_, l.data(), r.data(), numSamples);
+    const auto render = [this, numSamples] (const DuskVerbEngine* engine, std::vector<float>& l, std::vector<float>& r) {
+        FieldVoice& voice = fieldFor (engine);
+        voice.field.renderPost (earlyInput_, l.data(), r.data(), numSamples, voice.usesMonoInput (*engine));
         voice.shell.process (l.data(), r.data(), numSamples);
     };
     if (in)
-        render (fieldFor (activeEngine_), earlyInL_, earlyInR_);
+        render (activeEngine_, earlyInL_, earlyInR_);
     if (out)
-        render (fieldFor (fadingOut), earlyOutL_, earlyOutR_);
+        render (fadingOut, earlyOutL_, earlyOutR_);
 
     // Linear over the engines' fade (the same t), so the two gains sum to one: the same field on
     // both sides passes unchanged, where the equal-power engine fade would lift two correlated
@@ -1189,7 +1269,7 @@ void DuskVerbDSP::performPresetSwap()
     installEarlyField (newActive, preset, activeEngine_);
     if (preset != nullptr)
     {
-        preset->applyEngineConfig (*newActive);
+        preset->applyEngineConfig (*newActive, true);
         applyEnginePatch (*newActive, preset);
         scalerFor (newActive).capture (*newActive, storedDampingKnobs (*preset), true);
     }
@@ -1199,6 +1279,11 @@ void DuskVerbDSP::performPresetSwap()
         // preset previously applied to this reused instance can't leak its
         // PostTankEQ / topology / base delays onto the restored session.
         newActive->reapplyNeutralEngineConfig();
+        newActive->setShimmerOctaveTiming (false);
+        newActive->setShimmerAirInputHighpass (false);
+        newActive->setShimmerHFAir (0.0f);
+        newActive->setShimmerTailNoise (0.0f, 250.0f, 7000.0f);
+        newActive->setShimmerOutputHeadroom (1.0f);
         duskverb::applyNeutralPmbAndModeSmear (*newActive);   // the shared neutral config leaves them
         applyEnginePatch (*newActive, nullptr);
         // No stored knob values without a preset: the restored ones are the reference, so the
@@ -1368,6 +1453,27 @@ void DuskVerbDSP::processBlock (const float* const* in, float* const* out,
         }
         else
         {
+            if (cachedAlgorithm_ < 0 && (own != current.active || otherOwn))
+            {
+                // An engine change made during a reset starts immediately, without the
+                // preset swap that normally selects its Decay calibration and output EQ.
+                const auto* preset = lastAppliedPreset_.load (std::memory_order_acquire);
+                installDecayCalibration (preset);
+                installEarlyField (activeEngine_, preset, nullptr);
+                octaveTrim_.swapTo (octaveTrimGainsFor (preset), 0);
+                stereoBands_.swapTo (stereoBandsFor (preset), 0);
+                if (! own && preset != nullptr)
+                {
+                    // The shared engine still has the patch of the algorithm the preset was
+                    // recalled on. A moved preset plays another one on its earlier engine.
+                    preset->applyEngineConfig (*activeEngine_, true);
+                    applyEnginePatch (*activeEngine_, preset);
+                    scalerFor (activeEngine_).capture (*activeEngine_, storedDampingKnobs (*preset), true);
+                    // As in the swap: the session's own SixAP values over the preset's.
+                    pushSixAPBrightnessTo (*activeEngine_);
+                    activeEngine_->snapSmoothersToTargets();
+                }
+            }
             cachedAlgorithm_ = algoIdx;
             if (own)
             {

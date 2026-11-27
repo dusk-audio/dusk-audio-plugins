@@ -96,17 +96,16 @@ struct EarlyFieldConfig
     // level there. Two independent patterns are uncorrelated at every frequency and lose none.
     float sideOffsetMs = 0.0f;
     // Low shelf on the direct taps and the reflections (RBJ, slope 1): dB below shelfHz; 0: none.
-    // A reference cluster that is light below a few hundred Hz leaves the lows to the tank, and
-    // with them the lows' width.
+    // Cutting the cluster's low frequencies lets the tank set the stereo width of the bass.
     float shelfDb = 0.0f;
     float shelfHz = 250.0f;
-    // Every direct tap and reflection negative on the left and positive on the right, where a
-    // direct tap otherwise draws its sign and a reflection is positive. A reference that sets its
-    // early cluster up so (Lexicon Medium Live Room: thirteen taps a side inside 15 ms, the left
-    // ones negative, the right ones positive) has its lows in opposite phase for as long as the
-    // cluster lasts and louder than taps of mixed sign would make them, with its highs as
-    // uncorrelated as ever: same-sign taps add up below the frequency their spread allows.
+    // Give every tap negative polarity on the left and positive on the right.
+    // Closely spaced taps then add at low frequencies on each side, putting the
+    // lows in opposite phase across the stereo field.
     bool sidesOpposed = false;
+    // Replace the direct cluster with one polarity-inverted return on each input channel.
+    int invertedTapSamples = -1;
+    unsigned reversedReflections = 0;   // bit r reverses the polarity of reflection r
 };
 
 // The input history the early fields read: one stereo ring for both engines of the pair.
@@ -194,7 +193,8 @@ public:
     // configure() still clamps what it cannot hold.
     static constexpr bool valid (const EarlyFieldConfig& c) noexcept
     {
-        if (c.taps < 1 || c.taps > kMaxTaps || c.reflCount < 0 || c.reflCount > kMaxReflections)
+        if (c.taps < 1 || c.taps > kMaxTaps || c.reflCount < 0 || c.reflCount > kMaxReflections
+            || c.invertedTapSamples < -1 || c.reversedReflections >= (1u << kMaxReflections))
             return false;
         if (! (c.startMs >= 0.0f && c.windowMs >= 0.0f && c.startMs + c.windowMs <= kMaxDelayMs
                && c.attackMs >= 0.0f && c.attackMs <= kMaxDelayMs && c.slopeDb >= -60.0f && c.slopeDb <= 60.0f))
@@ -297,7 +297,16 @@ public:
         const int n = std::clamp (c.taps, 1, kMaxTaps);
         layout (injector_, n, 0x11ull);
         const float leftSign = c.sidesOpposed ? -1.0f : 0.0f, rightSign = c.sidesOpposed ? 1.0f : 0.0f;
-        if (c.sideOffsetMs == 0.0f)
+        if (c.invertedTapSamples >= 0)
+        {
+            for (auto& direct : direct_)
+            {
+                direct.count = 1;
+                direct.delay[0] = std::min (c.invertedTapSamples, maxDelay_);
+                direct.gain[0] = -1.0f;
+            }
+        }
+        else if (c.sideOffsetMs == 0.0f)
         {
             layout (direct_[0], n, 0x23ull, 0, leftSign);
             layout (direct_[1], n, 0x29ull, 0, rightSign);
@@ -322,7 +331,9 @@ public:
             // Exactly reflGain_ at a trim of 0, so a row without trims plays as it always did.
             const float trim = c.reflTrimDb[static_cast<size_t> (r)];
             const float level = trim == 0.0f ? reflGain_ : reflGain_ * std::pow (10.0f, trim / 20.0f);
-            reflGainEach_[static_cast<size_t> (r)] = c.sidesOpposed && r % 2 == 0 ? -level : level;   // even ones play on the left
+            const bool reverse = (c.reversedReflections & (1u << r)) != 0;
+            const bool leftOpposed = c.sidesOpposed && r % 2 == 0;
+            reflGainEach_[static_cast<size_t> (r)] = reverse != leftOpposed ? -level : level;
         }
         lowpassHz_ = std::min (c.lowpassHz, 0.45f * static_cast<float> (sr_));
         for (auto& lp : lowpass_)
@@ -346,46 +357,61 @@ public:
     {
         if (! (inject_ > 0.0f))
             return;
-        float* io[2] = { left, right };
         const float keep = 1.0f - inject_, send = inject_ * injectorNorm_;
         int pos = in.blockStart_;
-        for (int i = 0; i < n; ++i)
+        for (int offset = 0; offset < n; offset += kTile)
         {
-            for (int s = 0; s < 2; ++s)
-                io[s][i] = keep * io[s][i] + send * sum (in, in.ring_[static_cast<size_t> (s)], pos, injector_);
-            if (++pos == in.len_) pos = 0;
+            const int count = std::min (n - offset, kTile);
+            float taps[kTile];
+            for (int side = 0; side < 2; ++side)
+            {
+                sum (in, side, pos, injector_, taps, count);
+                float* io = (side == 0 ? left : right) + offset;
+                for (int i = 0; i < count; ++i) io[i] = keep * io[i] + send * taps[i];
+            }
+            pos = advance (in, pos, count);
         }
     }
 
-    // The direct taps and the reflections for the block `in` has just taken, lowpassed, written
-    // to left and right.
-    void renderPost (const EarlyFieldInput& in, float* left, float* right, int n) noexcept
+    void renderPost (const EarlyFieldInput& in, float* left, float* right, int n, bool monoInput = false) noexcept
     {
-        float* out[2] = { left, right };
         int pos = in.blockStart_;
-        for (int i = 0; i < n; ++i)
+        for (int offset = 0; offset < n; offset += kTile)
         {
-            // The burst reads both sides' input and plays the same on both; the side burst reads
-            // both too and plays +left / -right.
-            const float burst = burstGain_ > 0.0f
-                ? burstLowpass_.process (burstGain_ * 0.5f * (sum (in, in.ring_[0], pos, burst_) + sum (in, in.ring_[1], pos, burst_)))
-                : 0.0f;
-            const float side = sideGain_ > 0.0f
-                ? sideLowpass_[1].process (sideLowpass_[0].process (
-                      sideGain_ * 0.5f * (sum (in, in.ring_[0], pos, side_) + sum (in, in.ring_[1], pos, side_))))
-                : 0.0f;
-            for (int s = 0; s < 2; ++s)
+            const int count = std::min (n - offset, kTile);
+            float burst[kTile] {}, sideBurst[kTile] {}, other[kTile];
+            if (burstGain_ > 0.0f)
             {
-                const auto& ring = in.ring_[static_cast<size_t> (s)];
-                float early = directGain_ > 0.0f ? directGain_ * sum (in, ring, pos, direct_[s]) : 0.0f;
-                for (int r = s; r < reflCount_; r += 2)            // reflections alternate sides
-                    early += reflGainEach_[static_cast<size_t> (r)] * ring[static_cast<size_t> (wrap (in, pos - reflDelay_[static_cast<size_t> (r)]))];
-                early = lowpass_[static_cast<size_t> (s)].process (early);
-                if (shelfOn_)
-                    early = shelf_[static_cast<size_t> (s)].process (early);
-                out[s][i] = early + burst + (s == 0 ? side : -side);
+                sum (in, 0, pos, burst_, burst, count);
+                sum (in, 1, pos, burst_, other, count);
+                for (int i = 0; i < count; ++i)
+                    burst[i] = burstLowpass_.process (burstGain_ * 0.5f * (burst[i] + other[i]));
             }
-            if (++pos == in.len_) pos = 0;
+            if (sideGain_ > 0.0f)
+            {
+                sum (in, 0, pos, side_, sideBurst, count);
+                sum (in, 1, pos, side_, other, count);
+                for (int i = 0; i < count; ++i)
+                    sideBurst[i] = sideLowpass_[1].process (sideLowpass_[0].process (
+                        sideGain_ * 0.5f * (sideBurst[i] + other[i])));
+            }
+            for (int ear = 0; ear < 2; ++ear)
+            {
+                float* out = (ear == 0 ? left : right) + offset;
+                outputTaps (in, ear, ear, pos, out, count);
+                if (monoInput)
+                {
+                    outputTaps (in, 1 - ear, ear, pos, other, count);
+                    for (int i = 0; i < count; ++i) out[i] = 0.5f * (out[i] + other[i]);
+                }
+                for (int i = 0; i < count; ++i)
+                {
+                    float early = lowpass_[ear].process (out[i]);
+                    if (shelfOn_) early = shelf_[ear].process (early);
+                    out[i] = early + burst[i] + (ear == 0 ? sideBurst[i] : -sideBurst[i]);
+                }
+            }
+            pos = advance (in, pos, count);
         }
     }
 
@@ -527,14 +553,42 @@ private:
         return static_cast<int> (std::clamp (std::lround (ms * 1e-3 * sr_), 0L, static_cast<long> (maxDelay_)));
     }
 
-    static int wrap (const EarlyFieldInput& in, int i) noexcept { return i < 0 ? i + in.len_ : i; }
-
-    static float sum (const EarlyFieldInput& in, const std::vector<float>& ring, int pos, const Layout& l) noexcept
+    static constexpr int kTile = 64;
+    static int advance (const EarlyFieldInput& in, int pos, int count) noexcept
     {
-        float acc = 0.0f;
-        for (int k = 0; k < l.count; ++k)
-            acc += l.gain[static_cast<size_t> (k)] * ring[static_cast<size_t> (wrap (in, pos - l.delay[static_cast<size_t> (k)]))];
-        return acc;
+        pos += count;
+        return pos < in.len_ ? pos : pos - in.len_;
+    }
+
+    // The ring holds the complete input block plus its longest delay. Each tap spans at most
+    // one wrap, so consecutive output frames can accumulate it with contiguous reads.
+    static void addTap (const std::vector<float>& ring, int pos, int delay, float gain, float* out, int count) noexcept
+    {
+        const int size = static_cast<int> (ring.size());
+        int read = pos - delay;
+        if (read < 0) read += size;
+        const int first = std::min (count, size - read);
+        for (int i = 0; i < first; ++i) out[i] += gain * ring[read + i];
+        for (int i = first; i < count; ++i) out[i] += gain * ring[i - first];
+    }
+
+    static void sum (const EarlyFieldInput& in, int side, int pos, const Layout& layout, float* out, int count) noexcept
+    {
+        std::fill_n (out, count, 0.0f);
+        for (int tap = 0; tap < layout.count; ++tap)
+            addTap (in.ring_[side], pos, layout.delay[tap], layout.gain[tap], out, count);
+    }
+
+    void outputTaps (const EarlyFieldInput& in, int input, int ear, int pos, float* out, int count) const noexcept
+    {
+        if (directGain_ > 0.0f)
+        {
+            sum (in, input, pos, direct_[ear], out, count);
+            for (int i = 0; i < count; ++i) out[i] *= directGain_;
+        }
+        else std::fill_n (out, count, 0.0f);
+        for (int r = ear; r < reflCount_; r += 2)
+            addTap (in.ring_[input], pos, reflDelay_[r], reflGainEach_[r], out, count);
     }
 
     double sr_ = 48000.0;

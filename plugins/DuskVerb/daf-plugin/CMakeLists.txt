@@ -23,6 +23,9 @@ endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/cmake/DuskDafPlugin.cmake")
 
+# The saved-session engine in the original plug-in keeps its original arithmetic.
+add_compile_definitions(DUSKVERB2_OPTIMIZED_DSP=1)
+
 # The reverb engines are shared verbatim with the JUCE build; they are not
 # rewritten here. Listing them explicitly (rather than globbing) keeps the two
 # builds' translation-unit sets visibly identical.
@@ -50,6 +53,7 @@ set(DUSKVERB2_DSP_SOURCES
     ../core/DuskVerbDSP.cpp
     ../core/DuskVerbPresetEngineConfig.cpp
     ../core/dsp/NonLinBurstEngine.cpp
+    ../core/dsp/AuditoriumTail.cpp
     ../core/dsp/SectionReverbEngine.cpp)
 
 # Tuning hooks for local tuning builds, never a release: with this ON, the DUSKVERB2_EARLYFIELD,
@@ -100,14 +104,18 @@ target_include_directories(duskverb-2 PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp"
     ${DUSK_DAF_INCLUDE_DIRS})
 
-# MATCHING THE JUCE BUILD'S CODEGEN IS A CORRECTNESS REQUIREMENT HERE, not a
-# performance preference. The acceptance gate for this port is a per-preset null
-# test against the JUCE VST3, and the JUCE target compiles the very same engine
-# sources with "-O3 -ffast-math" (plugins/DuskVerb/CMakeLists.txt). Reassociation
-# and FMA contraction differences inside a 30-second recursive feedback loop turn
-# into an audible residual, so the flags have to agree. Unity builds are also
-# forbidden for this plugin for the same reason (project memory: unity build
-# breaks DuskVerb).
+# The engine sources are compiled with the JUCE target's flags, "-O3 -ffast-math"
+# (plugins/DuskVerb/CMakeLists.txt). Up to release 1.0.3 this port was held to a
+# per-preset null test against the JUCE VST3. It now also defines
+# DUSKVERB2_OPTIMIZED_DSP, which gives DuskVerb 2 its own faster paths in the shared
+# engines, so the two builds no longer render the same samples: presets whose
+# voicing did not change differ from 1.0.3 at rounding level (about -70 dB of the
+# signal, measured 2026-11-27). The legacy JUCE build does not define it. Measured
+# the same day, 19 of its 20 presets render byte-identical to the build before these
+# changes; Deep Blue Day differs at -76 dB, cause not found, accepted by the owner
+# as a known delta. Reassociation and FMA contraction inside a
+# 30-second recursive feedback loop still make the flags matter, and unity builds
+# stay forbidden for this plugin for that reason.
 if(NOT MSVC)
     target_compile_options(duskverb-2-dsp PRIVATE
         $<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:-O3 -ffast-math>)
@@ -255,6 +263,7 @@ enable_testing()
 
     add_executable(SectionReverbEngineTest
         ../core/tests/SectionReverbEngineTests.cpp
+        ../core/dsp/AuditoriumTail.cpp
         ../core/dsp/SectionReverbEngine.cpp)
     target_include_directories(SectionReverbEngineTest PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/../../shared-daf/dsp")
@@ -263,6 +272,10 @@ enable_testing()
         target_compile_options(SectionReverbEngineTest PRIVATE -O2)
     endif()
     add_test(NAME SectionReverbEngine COMMAND SectionReverbEngineTest)
+
+    add_executable(DuskVerbCompactPlateTest ../core/tests/CompactPlateTests.cpp)
+    target_include_directories(DuskVerbCompactPlateTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../core")
+    add_test(NAME DuskVerbCompactPlate COMMAND DuskVerbCompactPlateTest)
 
     add_executable(DuskVerbTonalCorrectionTest
         DuskVerbTonalCorrectionTests.cpp

@@ -79,6 +79,11 @@ int main()
         if (index >= 0) controls.loadProgram(static_cast<uint32_t>(index));
         check(controls.sound().room == RoomVoicing::Factory && controls.snapshot().room == RoomVoicing::Factory,
               "loading even the same factory base clears the room voicing");
+        auto imported = makeDefaultState();
+        imported.presetName = kBigDrumRoomPreset.name;
+        controls.publish(imported);
+        check(controls.sound().preset == &kBigDrumRoomPreset && controls.sound().program == -1,
+              "the standalone room retains its sound without claiming a host program number");
     }
 
     for (uint32_t program = 0; program < duskverb::dv2FactoryPresets().size(); ++program)
@@ -91,6 +96,9 @@ int main()
         });
         controls.loadProgram(program);
         const auto factory = controls.snapshot();
+        if (program >= duskverb::dv2FactoryPresets().size() - std::size(duskverb::kStudioPresets))
+            check(factory.params[Mix] == 0.35f && factory.params[BusMode] == 0.0f,
+                  "new factory insert recalls 35 percent wet with Bus off");
         check(factory.params == expected.params, "factory writes its complete set and preserves neighbors");
         check(factory.params[Bypass] == 1.0f && factory.params[Tone] == -0.7f,
               "factory preserves bypass and macro edits");

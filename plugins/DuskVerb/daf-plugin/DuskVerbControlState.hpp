@@ -149,8 +149,14 @@ private:
         uint32_t epoch;
         uint32_t recallEpoch;
         const FactoryPreset* preset;
+        int program = -1;
         Node(const StateValues& s, uint32_t e)
-            : state(s), epoch(e), recallEpoch(e), preset(factoryPresetByName(s.presetName)) {}
+            : state(s), epoch(e), recallEpoch(e), preset(factoryPresetByName(s.presetName))
+        {
+            const auto& bank = duskverb::dv2FactoryPresets();
+            for (size_t i = 0; i < bank.size(); ++i)
+                if (preset == &bank[i]) { program = static_cast<int>(i); break; }
+        }
     };
     struct Factory
     {
@@ -205,9 +211,7 @@ private:
         result.room = factory ? RoomVoicing::Factory : node.state.room;
         result.sixAP = factory ? factory->sixAP : node.state.sixAP;
         result.preset = factory ? factory->preset : node.preset;
-        result.program = -1;
-        if (result.preset)
-            result.program = int(result.preset - &duskverb::dv2FactoryPresets().front());
+        result.program = factory ? static_cast<int>(uint32_t(program) - 1) : node.program;
         result.edited = !factory && node.state.edited;
         // Under MIX LOCK, Mix and Bus are not part of the sound a preset names.
         const bool locked = mixLock();

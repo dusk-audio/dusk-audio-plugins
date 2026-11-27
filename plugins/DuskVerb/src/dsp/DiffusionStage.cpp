@@ -45,7 +45,7 @@ float ModulatedAllpass::process (float input, float g)
     // Modulated read position: sine LFO + optional spin-and-wander jitter.
     // The jitter (per-AP RandomWalkLFO at delay-proportional rate) breaks
     // the AP's modal phase-locking that the slow sine LFO can't disrupt.
-    float mod = std::sin (lfoPhase_) * lfoDepth_;
+    float mod = DspUtils::modulationSine (lfoPhase_) * lfoDepth_;
     if (jitterDepthFraction_ > 0.0f)
         mod += jitterLFO_.next();
     float readDelay = delaySamples_ + mod;

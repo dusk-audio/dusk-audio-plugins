@@ -139,15 +139,16 @@ public:
             {
                 const int n = std::min (kChunk, fade - at);
                 for (int side = 0; side < 2; ++side)
+                    std::copy_n (io[side] + at, n, scratch_[side].data());
+                run (outgoing, scratch_[0].data(), scratch_[1].data(), n);
+                run (incoming, left + at, right + at, n);
+                for (int side = 0; side < 2; ++side)
                 {
                     float* const x = io[side] + at;
-                    std::copy (x, x + n, scratch_.begin());
-                    run (outgoing, side, scratch_.data(), n);
-                    run (incoming, side, x, n);
                     for (int i = 0; i < n; ++i)
                     {
                         const float t = std::min (1.0f, static_cast<float> (fadeDone_ + at + i) * invSpan);
-                        const float out = scratch_[static_cast<size_t> (i)];
+                        const float out = scratch_[side][static_cast<size_t> (i)];
                         x[i] = out + t * (x[i] - out);
                     }
                 }
@@ -157,8 +158,7 @@ public:
                 fadeTotal_ = fadeDone_ = 0;               // the outgoing trim is gone
             done = fade;
         }
-        for (int side = 0; side < 2; ++side)
-            run (incoming, side, io[side] + done, numSamples - done);
+        run (incoming, left + done, right + done, numSamples - done);
     }
 
 private:
@@ -204,18 +204,21 @@ private:
                 s.reset();
     }
 
-    // One side through every section that runs, a section over the whole span at a time. A local
-    // copy keeps the state out of memory the samples might alias.
-    static void run (Cascade& c, int side, float* x, int n) noexcept
+    // The channel recurrences are independent. Interleave their updates so they can run in parallel.
+    static void run (Cascade& c, float* left, float* right, int n) noexcept
     {
         for (int b = 0; b < kOctaveTrimBands; ++b)
         {
             if (! c.runs[static_cast<size_t> (b)])
                 continue;
-            duskaudio::DoubleBiquad s = c.section[side][b];
+            auto l = c.section[0][b], r = c.section[1][b];
             for (int i = 0; i < n; ++i)
-                x[i] = s.process (x[i]);
-            c.section[side][b] = s;
+            {
+                left[i] = l.process (left[i]);
+                right[i] = r.process (right[i]);
+            }
+            c.section[0][b] = l;
+            c.section[1][b] = r;
         }
     }
 
@@ -223,7 +226,7 @@ private:
     Cascade cascades_[2];
     int current_ = 0;                                      // the trim playing (or fading in)
     int fadeTotal_ = 0, fadeDone_ = 0;
-    std::array<float, kChunk> scratch_ {};
+    std::array<float, kChunk> scratch_[2] {};
 };
 
 } // namespace duskverb

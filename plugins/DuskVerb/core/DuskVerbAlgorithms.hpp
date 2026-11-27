@@ -22,12 +22,17 @@ inline constexpr float kNonLinMaxDecaySeconds = 2.5f;
 inline constexpr int kRoomAlgorithm = 17;        // the room (SectionReverbEngine, Room model)
 inline constexpr int kChamberAlgorithm = 18;     // the chamber (SectionReverbEngine, Chamber model)
 inline constexpr int kSectionPlateAlgorithm = 19;   // the vintage plate (SectionReverbEngine, Vintage Plate model)
-inline constexpr int kNumAlgorithms = 20;        // engines that exist
+inline constexpr int kSectionHallAlgorithm = 20;    // Hall II (SectionReverbEngine, Hall model)
+inline constexpr int kCompactPlateAlgorithm = 21;
+inline constexpr int kStudioPlateAlgorithm = 22;
+inline constexpr int kModulatedHallAlgorithm = 23;
+inline constexpr int kAuditoriumAlgorithm = 24;
+inline constexpr int kNumAlgorithms = 25;        // engines that exist
 
 // The size of the Algorithm parameter as hosts see it. VST3 stores automation as a fraction
 // of a parameter's range, so this range must never change once a release is public: an engine
 // added later takes the next Reserved slot in place, and every recorded automation lane keeps
-// pointing at the same slot. 32 slots: the 20 engines, then room for 12 more.
+// pointing at the same slot. 32 slots in total.
 inline constexpr int kNumAlgorithmSlots = 32;
 static_assert (kNumAlgorithms <= kNumAlgorithmSlots, "every engine needs a slot");
 
@@ -48,12 +53,15 @@ inline constexpr bool isOwnAlgorithm (int slot) noexcept { return resolveAlgorit
 inline constexpr bool isSectionAlgorithm (int slot) noexcept
 {
     const int engine = resolveAlgorithm (slot);
-    return engine == kRoomAlgorithm || engine == kChamberAlgorithm || engine == kSectionPlateAlgorithm;
+    return (engine >= kRoomAlgorithm && engine <= kSectionHallAlgorithm)
+        || (engine >= kStudioPlateAlgorithm && engine <= kAuditoriumAlgorithm);
 }
 inline constexpr int sectionModelFor (int slot) noexcept
 {
     const int engine = resolveAlgorithm (slot);
-    return engine == kChamberAlgorithm ? 1 : (engine == kSectionPlateAlgorithm ? 2 : 0);
+    if (engine >= kStudioPlateAlgorithm && engine <= kAuditoriumAlgorithm)
+        return 4 + engine - kStudioPlateAlgorithm;
+    return isSectionAlgorithm (engine) ? engine - kRoomAlgorithm : 0;
 }
 
 // The name of the engine a slot plays.
@@ -68,6 +76,13 @@ inline const char* algorithmName (int slot) noexcept
         return "Chamber II";
     if (engine == kSectionPlateAlgorithm)
         return "Vintage Plate II";
+    if (engine == kSectionHallAlgorithm)
+        return "Hall II";
+    if (engine == kCompactPlateAlgorithm)
+        return "Compact Plate";
+    if (engine == kStudioPlateAlgorithm) return "Studio Plate";
+    if (engine == kModulatedHallAlgorithm) return "Modulated Hall";
+    if (engine == kAuditoriumAlgorithm) return "Auditorium";
     return getAlgorithmConfig (engine).name;
 }
 
@@ -92,7 +107,7 @@ inline bool algorithmVisible (int slot) noexcept
 inline bool algorithmFreezes (int slot) noexcept
 {
     const int engine = resolveAlgorithm (slot);
-    return engine < kNumSharedAlgorithms && getAlgorithmConfig (engine).engine != EngineType::ReverseRoom;
+    return engine == kCompactPlateAlgorithm || (engine < kNumSharedAlgorithms && getAlgorithmConfig (engine).engine != EngineType::ReverseRoom);
 }
 
 // The family whose control labels and value texts a slot uses. An own engine keeps the
