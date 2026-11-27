@@ -894,7 +894,7 @@ inline bool parsePmbLevel (const char* text, std::array<float, 6>& out) noexcept
     return detail::parseNumberList (text, out, 0.1, 4.0, true);
 }
 
-inline constexpr std::array<std::pair<std::string_view, EnginePatch>, 10> kEnginePatchByName {{
+inline constexpr std::array<std::pair<std::string_view, EnginePatch>, 9> kEnginePatchByName {{
     // Lower densifier coefficients spread the clustered low-mid modes without moving the attack.
     { "Medium Drum Room", { true, { 1.0f, 1.0f, 1.15f, 1.15f, 1.2f, 1.2f },
                             { 1.05023f, 0.983058f, 0.983058f, 0.97726f, 1.0728f, 1.0728f, 0.973603f, 1.0f, 1.0f },
@@ -918,11 +918,6 @@ inline constexpr std::array<std::pair<std::string_view, EnginePatch>, 10> kEngin
         return patch;
     }() },
     { "Tiled Room", { false, { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f }, { 1.0f, 1.15f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f } } },
-    // The shared table's 63 and 125 Hz decay (0.41 and 0.39 s, shortened in July against a judge
-    // that read the mono sum and matched gain on the whole band) left the realized T60 28 and 23 %
-    // under the target's 0.62 and 0.54 s, and the 40-200 Hz tail 21 to 24 dB under it at 0.5 to
-    // 1 s; 500 Hz ran 11 % long. With these the four octaves read within 10 % (2026-11-21).
-    { "Vocal Plate", { false, { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f }, { 1.38f, 1.29f, 1.0f, 0.9f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f } } },
     { "Black Hole", [] {
         EnginePatch patch;
         patch.modeSmear = { 50.0f, 2.0f };
@@ -955,43 +950,48 @@ inline constexpr std::array<std::pair<std::string_view, EnginePatch>, 10> kEngin
 
 inline constexpr EnginePatch kNoEnginePatch {};
 
+constexpr bool enginePatchValid (const EnginePatch& patch) noexcept
+{
+    for (float w : patch.pmbWidth)
+        if (w > 2.0f)
+            return false;
+    for (float m : patch.octaveDecay)
+        if (! (m > 0.05f && m < 20.0f))
+            return false;
+    if (patch.modeSmear[0] > 256.0f || (patch.modeSmear[0] >= 0.0f
+                                              && ! (patch.modeSmear[1] > 0.0f && patch.modeSmear[1] <= 5.0f)))
+        return false;
+    for (float s : patch.pmbSmearShare)
+        if (! (s >= 0.0f && s <= 1.0f))
+            return false;
+    if (patch.densityJitter > 0.02f || ! StereoBands::valid (patch.stereoBands))
+        return false;
+    for (float k : patch.pmbDensifier)
+        if (! (k >= -1.0f && k <= 0.75f))
+            return false;
+    for (float m : patch.pmbLevel)
+        if (! (m >= 0.1f && m <= 4.0f))
+            return false;
+    if (! (patch.sparseERLowpassHz == 0.0f
+           || (patch.sparseERLowpassHz >= 1000.0f && patch.sparseERLowpassHz <= 20000.0f)))
+        return false;
+    if (! ((patch.dualSlope[0] == 0.0f || (patch.dualSlope[0] >= 0.05f && patch.dualSlope[0] <= 1.0f))
+           && patch.dualSlope[1] >= 0.0f && patch.dualSlope[1] <= 4.0f))
+        return false;
+    if (! fdnDelaysValid (patch.fdnDelays) || ! fbRotationValid (patch.fbRotation)
+        || ! sparseERShapeValid (patch.sparseERShape) || ! tankOnsetValid (patch.tankOnset)
+        || ! sustainLimitValid (patch.sustainLimitMid) || ! sustainLimitValid (patch.sustainLimitLow)
+        || patch.denseHallStaticAllpasses < 0 || patch.denseHallStaticAllpasses > 2
+        || ! (patch.tankDelayMs >= 0.0f && patch.tankDelayMs <= 200.0f))
+        return false;
+    return true;
+}
+
 constexpr bool enginePatchTableValid() noexcept
 {
     for (auto row = kEnginePatchByName.begin(); row != kEnginePatchByName.end(); ++row)
     {
-        if (row->first.empty())
-            return false;
-        for (float w : row->second.pmbWidth)
-            if (w > 2.0f)
-                return false;
-        for (float m : row->second.octaveDecay)
-            if (! (m > 0.05f && m < 20.0f))
-                return false;
-        if (row->second.modeSmear[0] > 256.0f || (row->second.modeSmear[0] >= 0.0f
-                                                  && ! (row->second.modeSmear[1] > 0.0f && row->second.modeSmear[1] <= 5.0f)))
-            return false;
-        for (float s : row->second.pmbSmearShare)
-            if (! (s >= 0.0f && s <= 1.0f))
-                return false;
-        if (row->second.densityJitter > 0.02f || ! StereoBands::valid (row->second.stereoBands))
-            return false;
-        for (float k : row->second.pmbDensifier)
-            if (! (k >= -1.0f && k <= 0.75f))
-                return false;
-        for (float m : row->second.pmbLevel)
-            if (! (m >= 0.1f && m <= 4.0f))
-                return false;
-        if (! (row->second.sparseERLowpassHz == 0.0f
-               || (row->second.sparseERLowpassHz >= 1000.0f && row->second.sparseERLowpassHz <= 20000.0f)))
-            return false;
-        if (! ((row->second.dualSlope[0] == 0.0f || (row->second.dualSlope[0] >= 0.05f && row->second.dualSlope[0] <= 1.0f))
-               && row->second.dualSlope[1] >= 0.0f && row->second.dualSlope[1] <= 4.0f))
-            return false;
-        if (! fdnDelaysValid (row->second.fdnDelays) || ! fbRotationValid (row->second.fbRotation)
-            || ! sparseERShapeValid (row->second.sparseERShape) || ! tankOnsetValid (row->second.tankOnset)
-            || ! sustainLimitValid (row->second.sustainLimitMid) || ! sustainLimitValid (row->second.sustainLimitLow)
-            || row->second.denseHallStaticAllpasses < 0 || row->second.denseHallStaticAllpasses > 2
-            || ! (row->second.tankDelayMs >= 0.0f && row->second.tankDelayMs <= 200.0f))
+        if (row->first.empty() || ! enginePatchValid (row->second))
             return false;
         for (auto earlier = kEnginePatchByName.begin(); earlier != row; ++earlier)
             if (earlier->first == row->first)
@@ -1065,7 +1065,8 @@ constexpr bool legacyPresetVoicingValid() noexcept
     for (size_t i = 0; i < std::size (kLegacyPresetVoicing); ++i)
     {
         const auto& row = kLegacyPresetVoicing[i];
-        if (row.name.empty() || ! EarlyField::valid (row.earlyField) || ! OctaveTrim::valid (row.octaveTrim))
+        if (row.name.empty() || ! EarlyField::valid (row.earlyField) || ! OctaveTrim::valid (row.octaveTrim)
+            || (row.enginePatch != nullptr && ! enginePatchValid (*row.enginePatch)))
             return false;
         for (size_t j = 0; j < i; ++j)
             if (kLegacyPresetVoicing[j].name == row.name)
@@ -1073,7 +1074,7 @@ constexpr bool legacyPresetVoicingValid() noexcept
     }
     return true;
 }
-static_assert (legacyPresetVoicingValid(), "legacy voicing requires unique preset names and valid early fields and trims");
+static_assert (legacyPresetVoicingValid(), "legacy voicing requires unique preset names and valid early fields, trims and patches");
 
 // The row for preset `name` on `algorithm`, or none. Only an algorithm release 1.0.3 had can come
 // from one of its sessions: on the engines added since, a preset plays its current rows.

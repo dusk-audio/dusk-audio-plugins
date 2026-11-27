@@ -574,6 +574,38 @@ void testOwnEngineChangeAfterReset()
             "(%.3g of the peak)", peak > 0.0 ? fromNoReset / peak : 0.0);
 }
 
+// The same from an own engine to a shared one, where a moved preset plays what it played there in
+// release 1.0.3: after a reset the engine must get that patch and stereo stage along with the
+// early field and the output EQ, as the swap gives them without one. On the spring, which has no
+// free-running modulation, so the two starts are comparable sample by sample.
+void testEarlierEngineAfterReset()
+{
+    const FactoryPreset* room = presetNamed ("Live Room");
+    if (room == nullptr)
+        return;
+    const float earlier = static_cast<float> (static_cast<int> (EngineType::Spring));
+    auto reset = recalled (*room);
+    reset->clearState();
+    setPlain (*reset, Algorithm, earlier);
+    settle (*reset);
+    const std::vector<float> afterReset = burstResponse (*reset);
+    auto direct = recalled (*room);
+    setPlain (*direct, Algorithm, earlier);
+    settle (*direct);
+    const std::vector<float> noReset = burstResponse (*direct);
+    checkf (allFinite (afterReset) && allFinite (noReset), "Live Room to a shared engine after a reset: the burst responses are finite");
+    double peak = 0.0, apart = 0.0;
+    for (std::size_t i = 0; i < afterReset.size(); ++i)
+    {
+        peak = std::max (peak, static_cast<double> (std::fabs (noReset[i])));
+        apart = std::max (apart, static_cast<double> (std::fabs (afterReset[i] - noReset[i])));
+    }
+    std::printf ("Live Room to a shared engine after a reset: %.3g of the peak from the switch without a reset\n",
+                 peak > 0.0 ? apart / peak : 0.0);
+    checkf (peak > 0.0 && apart <= 1.0e-4 * peak, "after a reset, Live Room on a shared engine plays as it does without one "
+            "(%.3g of the peak)", peak > 0.0 ? apart / peak : 0.0);
+}
+
 // A preset published while a crossfade defers its swap must not re-voice the sounding own voice:
 // during the fade into Live Room, publishing Reverse Taps (the same engine, another row, no
 // parameter changed) leaves the fade rendering exactly as it does without it.
@@ -889,7 +921,22 @@ void testPortedPresetsKeepTheirSessions()
         checkf (legacyPresetVoicingFor (name, static_cast<int> (row->algorithm)) == row,
                 "'%s': a session on the earlier engine gets the row", n.c_str());
     }
-    // Release 1.0.3 played Vocal Plate without an engine patch; its present row came later.
+    // On the earlier engine the Decay reading of release 1.0.3 applies: at that reading the engines
+    // get the preset row's decay, and the patch is the earlier engine's.
+    for (const auto& row : kLegacyPresetVoicing)
+    {
+        const FactoryPreset* preset = presetNamed (row.name);
+        if (preset == nullptr || ! (row.shownDecay > 0.0f))
+            continue;
+        const auto dsp = recalled (*preset);
+        setPlain (*dsp, Algorithm, static_cast<float> (static_cast<int> (row.algorithm)));
+        setPlain (*dsp, Decay, row.shownDecay);
+        settle (*dsp);
+        const float want = dspFromPlain (paramDesc (Decay), preset->decay);
+        checkf (sameBits (dsp->engineDecay(), want), "%s: on its earlier engine, at the 1.0.3 reading the engines get the row's %.9g s (got %.9g)",
+                preset->name, want, dsp->engineDecay());
+    }
+    // Release 1.0.3 played Vocal Plate without an engine patch.
     const auto* vocalPlate = legacyPresetVoicingFor ("Vocal Plate", static_cast<int> (EngineType::AccurateHall));
     checkf (vocalPlate != nullptr && vocalPlate->enginePatch == &kNoEnginePatch, "a Vocal Plate session plays without the later engine patch");
     const auto* vintage = legacyPresetVoicingFor ("Vintage Vocal Plate", static_cast<int> (EngineType::DattorroVintage));
@@ -921,6 +968,7 @@ int main()
     testSectionPresetsOnTheirEngines();
     testCathedralStereoImpulse();
     testOwnEngineChangeAfterReset();
+    testEarlierEngineAfterReset();
     testDeferredPresetKeepsTheSoundingRow();
     testDensifierPatch();
     testEnginePatchNames();

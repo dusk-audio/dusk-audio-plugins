@@ -1461,6 +1461,15 @@ void DuskVerbDSP::processBlock (const float* const* in, float* const* out,
                 installDecayCalibration (preset);
                 installEarlyField (activeEngine_, preset, nullptr);
                 octaveTrim_.swapTo (octaveTrimGainsFor (preset), 0);
+                stereoBands_.swapTo (stereoBandsFor (preset), 0);
+                if (! own && preset != nullptr)
+                {
+                    // The shared engine still has the patch of the algorithm the preset was
+                    // recalled on. A moved preset plays another one on its earlier engine.
+                    preset->applyEngineConfig (*activeEngine_, true);
+                    applyEnginePatch (*activeEngine_, preset);
+                    scalerFor (activeEngine_).capture (*activeEngine_, storedDampingKnobs (*preset), true);
+                }
             }
             cachedAlgorithm_ = algoIdx;
             if (own)

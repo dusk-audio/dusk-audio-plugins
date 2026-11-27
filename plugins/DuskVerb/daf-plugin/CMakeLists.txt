@@ -105,13 +105,15 @@ target_include_directories(duskverb-2 PUBLIC
     ${DUSK_DAF_INCLUDE_DIRS})
 
 # The engine sources are compiled with the JUCE target's flags, "-O3 -ffast-math"
-# (plugins/DuskVerb/CMakeLists.txt). Until 1.0.3 this port was held to a per-preset
-# null test against the JUCE VST3. Since 1.1.0 it also defines
+# (plugins/DuskVerb/CMakeLists.txt). Up to release 1.0.3 this port was held to a
+# per-preset null test against the JUCE VST3. It now also defines
 # DUSKVERB2_OPTIMIZED_DSP, which gives DuskVerb 2 its own faster paths in the shared
 # engines, so the two builds no longer render the same samples: presets whose
 # voicing did not change differ from 1.0.3 at rounding level (about -70 dB of the
-# signal, measured 2026-11-27). The legacy JUCE build does not define it and is the
-# one held to its own earlier output. Reassociation and FMA contraction inside a
+# signal, measured 2026-11-27). The legacy JUCE build does not define it. Measured
+# the same day, 19 of its 20 presets render byte-identical to the build before these
+# changes; Deep Blue Day differs at -76 dB, cause not found, accepted by the owner
+# as a known delta. Reassociation and FMA contraction inside a
 # 30-second recursive feedback loop still make the flags matter, and unity builds
 # stay forbidden for this plugin for that reason.
 if(NOT MSVC)
