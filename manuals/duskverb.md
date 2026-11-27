@@ -15,7 +15,7 @@ tagline: Algorithmic reverb with eleven engines (pre-release)
 
 DuskVerb is an algorithmic reverb with eleven distinct engines under one user interface. Each engine targets a different reverb territory: **Plate** is the classic dense plate that works on almost everything; **Vintage Plate** is the darker, steely vintage-plate character; **Smooth Plate** is a smooth six-allpass plate; **Chamber** is a studio chamber and tight-room voice; **Spring** is the surf-guitar spring sound; **Gated** produces the gated 1980s drum sound and other non-natural curves; **Shimmer** adds pitched sparkle above and warmth below the tail; **Reverse** is the swelling reverse effect; **Hall** is a realistic per-octave-tuned hall; **Tiled Room** is a bright tiled room; and **Dense Hall** is a lush, densely diffused hall.
 
-Use it where you would use any reverb. Vocals, drums, guitars, and full-mix space all have an engine in DuskVerb that is voiced for them. The 20 factory presets are anchored to specific hardware references (classic digital halls, a steel plate, a vintage nonlinear reverb, and others) and serve both as starting points and as a tutorial in what each engine can do.
+Use it where you would use any reverb. Vocals, drums, guitars, and full-mix space all have an engine in DuskVerb that is voiced for them. The 20 factory presets are starting points, covering every engine except Smooth Plate.
 
 It is not a convolution reverb (use Convolution Reverb for IR-based work), and it is not a delay/multitap effect. It is an eleven-in-one algorithmic reverb that lets you pick the right engine for the job.
 
@@ -171,13 +171,13 @@ The bottom macro row applies three global shapers on top of whatever engine and 
 - **Mono Below:** 20 to 300 Hz. Frequencies below this cutoff are summed to mono in the reverb output. Default 20 Hz (effectively bypass); typical settings 80 to 150 Hz to keep low-frequency reverb mono-compatible.
 - **Gain Trim:** -48 to +48 dB. Final output level adjustment.
 
-The wet tail preserves the dry source's left/right placement instead of collapsing to the center: a signal panned left decays as a left-leaning tail, a right-panned source keeps its tail on the right, and centered input stays centered. Each preset's stereo behavior is calibrated against its hardware anchor reference, so the amount of preserved lean matches the character of the unit the preset emulates; a few presets keep an intentionally neutral image where their reference does (Black Hole, for example, renders a centered tail like the unit it recreates). Width still applies on top of this, so you can widen or narrow the preserved image to taste.
+A left-panned source generally produces a left-leaning tail. The amount varies by preset. Black Hole produces a centered tail even with a panned input. Width lets you widen or narrow the result.
 
 ## Tips and Traps
 
 - **Pre-Delay is your most important parameter for clarity.** Without pre-delay, the reverb tail starts on the same sample as the dry signal and the result smears. 20 to 60 ms of pre-delay keeps vocals and drums distinct from their reverb.
 - **The macros are the fast path.** Tone, Character, and Duck reshape any preset without diving into the per-band controls. Reach for them first when a preset is close but not quite matched to the track.
-- **Hardware anchors are real.** The presets are tuned to specific hardware references. "Vintage Vocal Plate" leans on the darker, steely character of a classic plate; "Blade Runner 224" captures a long-decay vintage digital hall sound; "Cathedral Large Hall" is a long classic digital hall. If you are familiar with the source hardware, the preset name tells you what to expect.
+- **Choose a preset by its decay and tone.** Vintage Vocal Plate has a dark, steely tail. Blade Runner 224 and Cathedral Large Hall offer longer digital hall decays.
 - **Engine switching is not parameter-preserving.** Each engine has its own internal state. Switching engines while a tail is decaying produces a crossfade; do not expect identical-sounding results across engines at the same parameter values.
 - **Freeze is loud.** Freeze captures the current reverb tail and loops it indefinitely. Levels can build dramatically; pull Gain Trim back before enabling Freeze on a busy mix.
 
@@ -189,7 +189,7 @@ The wet tail preserves the dry source's left/right placement instead of collapsi
 
 ![Preset menu by category](screenshots/duskverb/05-presets-by-category.png)
 
-DuskVerb ships with 20 factory presets, laid out in a two-column menu grouped by category. Each is hardware-anchored and serves as a starting point.
+DuskVerb ships with 20 factory presets, laid out in a two-column menu grouped by category.
 
 ### Plates
 
