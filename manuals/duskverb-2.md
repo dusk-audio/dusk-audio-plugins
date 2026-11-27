@@ -2,8 +2,8 @@
 slug: duskverb-2
 title: DuskVerb 2
 version: 1.0.3
-last_updated: 2026-11-23
-tagline: Algorithmic reverb with 24 factory sounds
+last_updated: 2026-11-24
+tagline: Algorithmic reverb with 45 factory sounds
 ---
 
 # DuskVerb 2
@@ -11,8 +11,8 @@ tagline: Algorithmic reverb with 24 factory sounds
 ## Overview
 
 DuskVerb 2 combines the original DuskVerb reverb engines, its own nonlinear
-engine and updated voicing with a redesigned interface. Its 24 factory presets
-provide starting points for plates, rooms, halls, springs and nonlinear bursts.
+engine and updated voicing with a redesigned interface. Its 45 factory presets
+provide starting points for plates, rooms, chambers, halls, auditoriums, springs and nonlinear bursts.
 Engine selection changes the reverb topology;
 some controls change labels or availability to match the selected engine.
 
@@ -52,9 +52,24 @@ Sync retains the free pre-delay setting, and Bus retains the Dry / Wet setting.
 **Freeze** holds the reverb on supported engines; it is hidden for Reverse
 and Nonlinear. The gated engine also exposes its **Gate** switch. Controls
 unused by the selected engine are dimmed.
-**Tonal Correction** appears only where it changes the sound: the Vocal Plate,
-Ambience and Tiled Room sounds on the Hall and Tiled Room engines (and on the
-older hall engines a restored session may still use).
+**Vocal Plate** uses Compact Plate, an eight-delay stereo reverb. **Tonal Correction**
+is available for Ambience and for saved sessions using the earlier Vocal Plate
+and Tiled Room engines.
+
+**Medium Drum Room** and **Tiled Room** use the Room engine. In Tiled Room,
+Decay changes the spacing of the reflections that carry the tail.
+The separately importable **Big Drum Room Matched** uses a larger room with
+60 ms of reverb pre-delay. Previously saved versions recall the chamber engine.
+
+**Cathedral Large Hall** uses Hall II with a 66 m room and 21 ms of pre-delay.
+Separate filters keep the early reflections darker than the tail.
+
+**Vocal Hall** uses the Room engine. Pre-Delay starts at 0 ms for the early
+reflections. The late reverb has its own 110 ms pre-delay setting. Decay reads
+2.83 s at recall.
+
+Sessions saved with the previous engines recall their original settings.
+Reselect the factory preset to hear its current voicing.
 
 On the **Nonlinear** engine, Decay sets the length of the burst: the time it
 takes to fall by 60 dB. The burst follows Decay from about 0.27 s up to 2.5 s.
@@ -96,6 +111,18 @@ preserving the settings intentionally excluded by the original preset format.
 An asterisk beside the preset name indicates an edited sound. **Mix Lock**,
 below the Bus switch, keeps Dry / Wet and Bus unchanged on preset recall and
 INIT; A/B still restores the complete sound.
+
+The factory menu groups the 21 additional presets by family.
+
+| Factory menu group | Presets |
+|---|---|
+| Chambers II | Warm Chamber, Medium Chamber, Dark Chamber |
+| Auditoriums | Small Wood Room, Vocal Concert Hall, Concert Hall |
+| Halls II | Wide Hall, Studio Hall, Large Warm Hall |
+| Studio Plates | Large Plate, Tight Plate, Small Plate |
+| Modulated Halls | Lush Hall Medium, Lush Hall Long, Lush Hall Dark |
+| Rooms II | Tight Live Room, Theater Room, Dark Drum Room |
+| Vintage Plates | Vintage Plate, Vintage Bright Plate, Short Vocal Plate |
 
 **A** and **B** switch between complete comparison snapshots. **COPY** copies
 the active sound into the other slot without switching. Save sounds you want

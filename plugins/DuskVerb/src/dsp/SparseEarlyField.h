@@ -55,6 +55,30 @@ public:
                   const float* sourceSide = nullptr)
     {
         if (! prepared_) { std::fill (outL, outL+numSamples, 0.0f); std::fill (outR, outR+numSamples, 0.0f); return; }
+#if defined(DUSKVERB2_OPTIMIZED_DSP)
+        // The last tap is the longest (buildChannel visits successive time cells).
+        // Limit the write-ahead to the unused ring capacity so no pending tap is overwritten.
+        const int longest = std::max (numTapsL_ ? tapDelayL_[numTapsL_ - 1] : 0,
+                                      numTapsR_ ? tapDelayR_[numTapsR_ - 1] : 0);
+        const int capacity = mask_ + 1;
+        for (int offset = 0; offset < numSamples;)
+        {
+            const int count = std::min ({ numSamples - offset, capacity - writePos_, capacity - longest });
+            for (int i = 0; i < count; ++i)
+            {
+                const int j = offset + i;
+                const float x = 0.5f * (inL[j] + inR[j]);
+                const float side = stereoInputAmount_ > 0.0f
+                    ? (sourceSide != nullptr ? sourceSide[j] : 0.5f * (inL[j] - inR[j])) : 0.0f;
+                bufferL_[writePos_ + i] = x + stereoInputAmount_ * side;
+                bufferR_[writePos_ + i] = x - stereoInputAmount_ * side;
+            }
+            sumTaps (bufferL_, tapDelayL_, tapGainL_, numTapsL_, outL + offset, count);
+            sumTaps (bufferR_, tapDelayR_, tapGainR_, numTapsR_, outR + offset, count);
+            writePos_ = (writePos_ + count) & mask_;
+            offset += count;
+        }
+#else
         for (int i = 0; i < numSamples; ++i)
         {
             const float x = 0.5f * (inL[i] + inR[i]);
@@ -70,10 +94,11 @@ public:
             for (int t = 0; t < numTapsR_; ++t)
                 r += tapGainR_[t] * bufferR_[static_cast<size_t> ((writePos_ - tapDelayR_[t]) & mask_)];
 
-            outL[i] = l * kOutputScale;
-            outR[i] = r * kOutputScale;
+            outL[i] = l;
+            outR[i] = r;
             writePos_ = (writePos_ + 1) & mask_;
         }
+#endif
     }
 
     void clear()
@@ -86,7 +111,19 @@ public:
 private:
     static constexpr int   kMaxTaps     = 160;
     static constexpr float kMaxTimeMs   = 220.0f;
-    static constexpr float kOutputScale = 1.0f;
+    void sumTaps (const std::vector<float>& ring, const int* delays, const float* gains,
+                  int taps, float* out, int count) const noexcept
+    {
+        std::fill_n (out, count, 0.0f);
+        for (int t = 0; t < taps; ++t)
+        {
+            const int read = (writePos_ - delays[t]) & mask_;
+            const int first = std::min (count, mask_ + 1 - read);
+            for (int i = 0; i < first; ++i) out[i] += gains[t] * ring[read + i];
+            for (int i = first; i < count; ++i) out[i] += gains[t] * ring[i - first];
+        }
+    }
+
     // ~32 grain cells span 0..200ms; density envelope decides how many fire.
     static constexpr int   kCells       = 200;   // 1 ms cells
 

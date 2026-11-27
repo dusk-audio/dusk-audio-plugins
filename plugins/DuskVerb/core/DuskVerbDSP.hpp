@@ -57,6 +57,7 @@
 #include "Dv2StereoBands.hpp"
 #include "dsp/SectionReverbEngine.h"
 #include "dsp/NonLinBurstEngine.h"
+#include "dsp/CompactPlate.hpp"
 
 #include <atomic>
 #include <optional>
@@ -224,6 +225,7 @@ private:
     struct OwnVoice
     {
         NonLinBurstEngine nonLin;
+        CompactPlate plate;
         SectionReverbEngine sections;
         Dv2OutputShell shell;
         int algorithm = kNonLinAlgorithm;          // the own engine this voice plays while active
@@ -243,6 +245,9 @@ private:
     {
         EarlyField field;
         Dv2OutputShell shell;
+        bool monoShimmerInput = false;
+        bool usesMonoInput (const DuskVerbEngine& engine) const noexcept
+        { return monoShimmerInput && engine.engineType() == EngineType::Shimmer; }
         bool needsSnap = false;      // started over since the last push: land on the controls, no glide
     };
     OwnVoice& ownFor (const DuskVerbEngine* engine) noexcept { return engine == &engineB_ ? ownB_ : ownA_; }

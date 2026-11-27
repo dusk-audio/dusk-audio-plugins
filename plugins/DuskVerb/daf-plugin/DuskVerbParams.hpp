@@ -232,6 +232,14 @@ inline bool validUserName(std::string_view name) noexcept
     return true;
 }
 
+// Saved factory identities and user-chosen file titles are independent.
+inline std::string_view currentFactoryName(std::string_view name) noexcept
+{
+    for (const auto& row : kStudioPresets)
+        if (row.previousName == name) return row.name;
+    return name;
+}
+
 // Complete-set transactional decoder: `out` is untouched unless every
 // parameter key appears exactly once with a finite, in-range value. A
 // half-applied state is worse than a rejected one.
@@ -273,6 +281,8 @@ inline bool decodeState(std::string_view state, StateValues& out) noexcept
             if (value.substr(0, 4) == "hex:") { if (!decodeHexText(value, decoded.presetName)) return false; }
             else if (safePresetText(value)) decoded.presetName.assign(value);
             else return false;
+            const auto current = currentFactoryName(decoded.presetName);
+            if (current != decoded.presetName) decoded.presetName = current;
         }
         else if (key == "@user")
         {
@@ -371,6 +381,8 @@ inline int factoryPresetCount() { return static_cast<int>(duskverb::dv2FactoryPr
 
 inline const FactoryPreset* factoryPresetByName(std::string_view name)
 {
+    name = currentFactoryName(name);
+    if (name == kBigDrumRoomPreset.name) return &kBigDrumRoomPreset;
     for (const auto& preset : duskverb::dv2FactoryPresets())
         if (name == preset.name) return &preset;
     return nullptr;

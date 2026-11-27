@@ -233,7 +233,7 @@ private:
 
     // Worst-case base delay across all algorithms (for buffer allocation)
     // Must be >= the largest value in any preset delay table.
-    // Currently: kPresetFatSnareHall reaches 6613.
+    // The longest preset delay is 6613 samples.
     static constexpr int kMaxBaseDelay = 6700;
 
     // =========================================================================
@@ -319,6 +319,12 @@ private:
         // Freeze flag (every-sample read)
         bool  frozen             = false;
     };
+
+    static constexpr float kMaxModDepth = 2.0f;
+    static constexpr float kModSamplesPerUnit = 4.0f;
+    static constexpr int kReadFrames = 64;
+    bool delaysAllowBatch (const LiveParams& lp) const;
+    void readDiffusedBlock (const LiveParams& lp, float (&out)[kReadFrames][N], int count);
 
     std::array<LiveParams, 2> paramSlots_;
     std::atomic<LiveParams*>  liveParams_ { nullptr };

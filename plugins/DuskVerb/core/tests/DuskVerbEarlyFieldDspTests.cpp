@@ -13,6 +13,7 @@
 // both renders' engines identical, so the field-on render less the field-off one is the field's
 // own contribution.
 
+#include "LegacyRoomPresetFixtures.hpp"
 #include "DuskVerbDSP.hpp"
 #include "DuskVerbDv2Voicing.hpp"
 #include "DuskVerbParamTable.hpp"
@@ -91,7 +92,7 @@ const FactoryPreset& presetNamed (const char* name)
 // `preset`'s values, as a host writes them before loading it, at 100 % wet.
 void setPreset (DuskVerbDSP& dsp, const FactoryPreset& preset)
 {
-    duskverb::collectDv2Parameters (preset, [&] (const char* id, float v) {
+    duskverb::test::collectSavedOrFactoryParameters (preset, [&] (const char* id, float v) {
         const int i = duskverb::paramIndexForId (id);
         if (i >= 0) setPlain (dsp, i, v);
     });
@@ -153,19 +154,20 @@ float tone440 (int t, int) { return 0.2162718f * static_cast<float> (std::sin (2
 // `source (t, channel)`, block by block. `afterBlock (dsp, block)` runs after each block of it.
 template <typename Source, typename AfterBlock>
 Render render (const FactoryPreset& preset, const EarlyFieldConfig* field, int length, Source&& source,
-               AfterBlock&& afterBlock)
+               AfterBlock&& afterBlock, double sampleRate = kSr)
 {
     // The octave trim (tested in DuskVerbOctaveTrimDspTests) is held flat, so these checks see
     // the field alone on presets that carry both.
     auto dsp = std::make_unique<DuskVerbDSP> (field, &duskverb::kFlatOctaveTrim);
-    dsp->prepare (kSr, kBlock);
+    dsp->prepare (sampleRate, kBlock);
     setPreset (*dsp, preset);
     dsp->applyFactoryPresetConfig (preset);
 
     std::vector<float> l (kBlock), r (kBlock);
     const float* in[2] = { l.data(), r.data() };
     float* out[2] = { l.data(), r.data() };
-    for (int done = 0; done < kSettle; done += kBlock)
+    const int settle = static_cast<int> (std::lround (kSettle * sampleRate / kSr));
+    for (int done = 0; done < settle; done += kBlock)
     {
         std::fill (l.begin(), l.end(), 0.0f);
         std::fill (r.begin(), r.end(), 0.0f);
@@ -589,8 +591,9 @@ void testFreezeFadesTheFieldsInput()
 {
     for (const char* name : { "Medium Drum Room", "Vocal Hall" })
     {
-        const FactoryPreset& preset = presetNamed (name);
-        EarlyFieldConfig c = duskverb::earlyFieldFor (preset.name);
+        const FactoryPreset& preset = duskverb::test::sharedPresetNamed (name);
+        const auto* legacy = duskverb::legacyPresetVoicingFor (name, preset.algorithm);
+        EarlyFieldConfig c = legacy != nullptr ? legacy->earlyField : duskverb::earlyFieldFor (name);
         c.inject = 0.0f;
         const int n = 72000, frozenFrom = 94 * kBlock, thawedFrom = 188 * kBlock;
         const auto toggle = [] (DuskVerbDSP& dsp, int block) {
@@ -719,7 +722,7 @@ void testAReloadUnderASustainedToneIsClean()
 void testASwapToAnotherPresetCrossfadesLinearly()
 {
     const FactoryPreset& from = presetNamed ("Bright Hall");
-    const FactoryPreset& to = presetNamed ("Medium Drum Room");       // every output control differs
+    const FactoryPreset& to = duskverb::test::sharedPresetNamed ("Medium Drum Room");       // every output control differs
     const EarlyFieldConfig c = directField();
     const int n = 19200, swapBlock = 20;
     const auto noise = [] (int t, int ch) { return noiseAt (t, ch); };
@@ -808,6 +811,38 @@ void testASwapToAnotherPresetCrossfadesLinearly()
     checkf (worst <= 1e-6, "a swap to another preset is not the linear crossfade of the two fields (worst %g)", worst);
 }
 
+void testBlackHoleReflectionPolarity()
+{
+    const auto out = render (presetNamed ("Black Hole"), nullptr, 1800, impulse, [] (DuskVerbDSP&, int) {});
+    for (int side = 0; side < 2; ++side)
+    {
+        const auto& x = out.side (side);
+        const auto repeat = std::max_element (x.begin() + 1608, x.begin() + 1619,
+                                              [] (float a, float b) { return std::abs (a) < std::abs (b); });
+        checkf (x[16] > 0.02f && *repeat < -0.006f,
+                "Black Hole channel %d first %.5f, 33.6 ms repeat %.5f", side, x[16], *repeat);
+    }
+}
+
+void testDeepBlueFirstReturn()
+{
+    const FactoryPreset& preset = presetNamed ("Deep Blue Day");
+    for (int rate : { 44100, 48000, 96000 })
+        for (int input = 0; input < 2; ++input)
+        {
+            const auto impulseOnInput = [input] (int sample, int ch) {
+                return sample == 0 && ch == input ? 1.0f : 0.0f;
+            };
+            const auto out = render (preset, nullptr, 64, impulseOnInput, [] (DuskVerbDSP&, int) {}, rate);
+            const auto& same = out.side (input);
+            const auto first = std::find_if (same.begin(), same.end(), [] (float x) { return std::abs (x) > 0.005f; });
+            checkf (first - same.begin() == 16 && same[16] < -0.02f
+                    && std::abs (out.side (1 - input)[16]) < -0.10f * same[16],
+                    "Deep Blue Day at %d Hz input %d: first return at %td, same channel %.5f, other %.5f",
+                    rate, input, first - same.begin(), same[16], out.side (1 - input)[16]);
+        }
+}
+
 // A host reset right after the impulse (every tap still to come): none of them plays.
 void testAHostResetSilencesIt()
 {
@@ -826,6 +861,8 @@ int main()
     testPresetsWithoutAFieldAreUnchanged();
     testTheTuningHook();
     testTheFieldReachesTheOutput();
+    testDeepBlueFirstReturn();
+    testBlackHoleReflectionPolarity();
     testTheOutputControlsMoveTheField();
     testOwnEnginesNeverPlayIt();
     testFreezeStopsTheField();

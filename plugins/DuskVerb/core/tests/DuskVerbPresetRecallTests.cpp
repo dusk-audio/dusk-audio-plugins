@@ -9,6 +9,7 @@
 // so it sounds as before, and Decay moves them in proportion from there. On any other engine, on
 // a preset without a reading and in a preset-less session the engines are given Decay itself.
 
+#include "LegacyRoomPresetFixtures.hpp"
 #include "DuskVerbDSP.hpp"
 #include "DuskVerbDv2Voicing.hpp"
 #include "DuskVerbPresetEngineConfig.h"
@@ -66,10 +67,10 @@ void setPlain (DuskVerbDSP& dsp, int index, float plain)
     dsp.setParameter (index, dspFromPlain (paramDesc (index), plain));
 }
 
-void settle (DuskVerbDSP& dsp)
+void settle (DuskVerbDSP& dsp, int blocks = kSettleBlocks)
 {
     std::vector<float> l (kBlock), r (kBlock);
-    for (int b = 0; b < kSettleBlocks; ++b)
+    for (int b = 0; b < blocks; ++b)
     {
         std::fill (l.begin(), l.end(), 0.0f);
         std::fill (r.begin(), r.end(), 0.0f);
@@ -82,7 +83,7 @@ void settle (DuskVerbDSP& dsp)
 // `preset` recalled onto `dsp` as a host recalls it: its values at 100 % wet, then the swap.
 void recallOnto (DuskVerbDSP& dsp, const FactoryPreset& preset)
 {
-    collectDv2Parameters (preset, [&] (const char* id, float v) {
+    test::collectSavedOrFactoryParameters (preset, [&] (const char* id, float v) {
         const int i = paramIndexForId (id);
         if (i >= 0) setPlain (dsp, i, v);
     });
@@ -100,7 +101,7 @@ std::unique_ptr<DuskVerbDSP> recalled (const FactoryPreset& preset)
 }
 
 // Half a second of `dsp`'s output (left, then right) after 50 ms of a fixed noise burst.
-std::vector<float> burstResponse (DuskVerbDSP& dsp)
+std::vector<float> burstResponse (DuskVerbDSP& dsp, bool oppositePolarity = false)
 {
     constexpr int kBurst = 2400, kLength = 24064;
     std::vector<float> l (kBlock), r (kBlock), out;
@@ -112,6 +113,8 @@ std::vector<float> burstResponse (DuskVerbDSP& dsp)
             seed = seed * 1664525u + 1013904223u;
             const float noise = static_cast<float> (seed >> 8) / 8388608.0f - 1.0f;
             l[static_cast<size_t> (i)] = r[static_cast<size_t> (i)] = start + i < kBurst ? 0.5f * noise : 0.0f;
+            if (oppositePolarity)
+                r[static_cast<size_t> (i)] = -l[static_cast<size_t> (i)];
         }
         const float* in[] = { l.data(), r.data() };
         float* outs[] = { l.data(), r.data() };
@@ -278,12 +281,14 @@ void testSwapGivesCalibratedDecay()
             continue;
         const auto direct = recalled (*preset);
         const auto moved = recalled (*preset);
-        settle (*direct);                          // the same time passes on both (LFO phases)
-        settle (*direct);
+        // Moving Tiled Room's Decay moves the reflection taps in four groups at
+        // their gain minima. Two moves can queue two 1.5 s sweeps.
+        const int blocks = name == "Tiled Room" ? static_cast<int> (3.2 * kSr / kBlock) : kSettleBlocks;
+        settle (*direct, 2 * blocks);
         setPlain (*moved, Decay, shown * 2.0f);
-        settle (*moved);
+        settle (*moved, blocks);
         setPlain (*moved, Decay, shown);
-        settle (*moved);
+        settle (*moved, blocks);
         const std::vector<float> a = burstResponse (*direct), b = burstResponse (*moved);
         double peak = 0.0, worst = 0.0;
         for (size_t i = 0; i < a.size(); ++i)
@@ -360,20 +365,17 @@ double tailCorrelation (DuskVerbDSP& dsp, double loHz, double hiHz)
     return lr / std::sqrt (std::max (ll * rr, 1.0e-300));
 }
 
-// Medium Drum Room recalls with its stereo patch (Mono Below 40 Hz, the PMB engine's decorrelated
+// Medium Drum Room sessions saved on the PMB engine recall with their stereo patch (Mono Below 40 Hz, the PMB engine's decorrelated
 // side and band widths, DuskVerbDv2Voicing.hpp): below 300 Hz, the tail of a decorrelated noise
 // burst stays decorrelated, where the legacy side collapses it (+0.76). And it keeps the patch
 // through a host deactivate/activate, whose re-prepare re-installs the engine config: the shared
 // table's narrow low widths came back there once, with the side still on (+0.5 broadband).
 void testStereoPatch()
 {
-    const FactoryPreset* preset = presetNamed ("Medium Drum Room");
-    checkf (preset != nullptr, "Medium Drum Room is a factory preset");
-    if (preset == nullptr)
-        return;
-    const auto fresh = recalled (*preset);
+    const FactoryPreset& preset = test::sharedPresetNamed ("Medium Drum Room");
+    const auto fresh = recalled (preset);
     const double recall = lowTailCorrelation (*fresh);
-    const auto cycled = recalled (*preset);
+    const auto cycled = recalled (preset);
     cycled->releaseResources();
     cycled->prepare (kSr, kBlock);
     settle (*cycled);
@@ -425,6 +427,57 @@ double earlyLowCorrelation (DuskVerbDSP& dsp, double hiHz, double ms)
     return lr / std::sqrt (std::max (ll * rr, 1.0e-300));
 }
 
+// Single-channel unit impulses for Cathedral Large Hall at 48 kHz,
+// 256-frame host blocks and 3072 silent frames. The sample indices include the
+// section engine's 32-frame buffer. Each route has its own delay and tail.
+void testCathedralStereoImpulse()
+{
+    const auto* preset = presetNamed ("Cathedral Large Hall");
+    if (preset == nullptr)
+        return; // testSectionPresetsOnTheirEngines checks the factory identity.
+    struct Response { int arrival; double firstSample, tailEnergy; };
+    constexpr Response reference[2][2] {
+        { { 368, 0.001577078, 0.024670703 }, { 576, 0.001054095, 0.026481170 } },
+        { { 643, 0.001054082, 0.025996409 }, { 341, 0.001577051, 0.023651026 } }
+    };
+    for (int input = 0; input < 2; ++input)
+    {
+        auto dsp = recalled (*preset);
+        int first[2] { -1, -1 };
+        double amplitude[2] {}, energy[2] {};
+        for (int pos = 0; pos < 48000; pos += kBlock)
+        {
+            float samples[2][kBlock] {};
+            if (pos == 0)
+                samples[input][0] = 1.0f;
+            const float* in[] { samples[0], samples[1] };
+            float* out[] { samples[0], samples[1] };
+            const int count = std::min (kBlock, 48000 - pos);
+            dsp->processBlock (in, out, 2, count);
+            for (int ch = 0; ch < 2; ++ch)
+                for (int j = 0; j < count; ++j)
+                {
+                    const double x = samples[ch][j];
+                    if (first[ch] < 0 && std::abs (x) > 1.0e-4)
+                    {
+                        first[ch] = pos + j;
+                        amplitude[ch] = x;
+                    }
+                    if (pos + j >= 4800)
+                        energy[ch] += x * x;
+                }
+        }
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            const Response& r = reference[input][ch];
+            checkf (first[ch] == r.arrival && std::abs (amplitude[ch] / r.firstSample - 1.0) < 0.02
+                    && std::abs (energy[ch] / r.tailEnergy - 1.0) < 0.02,
+                    "Cathedral %d to %d: first sample %d (expected %d), amplitude %.8f, 0.1-1 s energy %.8f",
+                    input, ch, first[ch], r.arrival, amplitude[ch], energy[ch]);
+        }
+    }
+}
+
 // Live Room and Reverse Taps play on DuskVerb 2's room, Large Chamber on its chamber and the two
 // vintage plates on its vintage plate (kOwnEngineByName, kSectionReverbByName). Live Room opens with anti-phase lows (its left taps negative, its right
 // positive, and the loop's two sections feeding opposite sides). On both, a host
@@ -432,10 +485,17 @@ double earlyLowCorrelation (DuskVerbDSP& dsp, double hiHz, double ms)
 // re-prepare (DuskVerbDSP::prepare re-installs the shared config, which must not take it).
 void testSectionPresetsOnTheirEngines()
 {
+    const FactoryPreset* plate = presetNamed ("Vocal Plate");
+    checkf (plate && std::string_view (algorithmName (plate->algorithm)) == "Compact Plate",
+            "Vocal Plate recalls the compact plate engine");
     struct Expect { const char* name; int algorithm; const char* engine; };
     for (const Expect& e : { Expect { "Live Room", kRoomAlgorithm, "Room" },
+                             Expect { "Medium Drum Room", kRoomAlgorithm, "Room" },
+                             Expect { "Tiled Room", kRoomAlgorithm, "Room" },
+                             Expect { "Vocal Hall", kRoomAlgorithm, "Room" },
                              Expect { "Reverse Taps", kRoomAlgorithm, "Room" },
                              Expect { "Large Chamber", kChamberAlgorithm, "Chamber" },
+                             Expect { "Cathedral Large Hall", kSectionHallAlgorithm, "Hall II" },
                              Expect { "Vintage Vocal Plate", kSectionPlateAlgorithm, "vintage plate" },
                              Expect { "Vintage Gold Plate", kSectionPlateAlgorithm, "vintage plate" } })
     {
@@ -602,21 +662,18 @@ double tailAutocorrelation (DuskVerbDSP& dsp, double loHz, double hiHz, int lag)
     return num / std::max (den, 1.0e-300);
 }
 
-// Medium Drum Room recalls with its densifier coefficients (DuskVerbDv2Voicing.hpp): its 1-3 kHz
+// Medium Drum Room sessions saved on the PMB engine recall with their densifier coefficients (DuskVerbDv2Voicing.hpp): its 1-3 kHz
 // tail no longer repeats at the delays of line 5's allpasses (348 and 246 samples; line 5 is the
 // band's mid tap), where the tank's own 0.55 bunches the band's modes every fs / delay Hz. And it
 // keeps the coefficients through a host deactivate/activate.
 void testDensifierPatch()
 {
-    const FactoryPreset* preset = presetNamed ("Medium Drum Room");
-    checkf (preset != nullptr, "Medium Drum Room is a factory preset");
-    if (preset == nullptr)
-        return;
-    const auto first = recalled (*preset);
+    const FactoryPreset& preset = test::sharedPresetNamed ("Medium Drum Room");
+    const auto first = recalled (preset);
     const double at348 = tailAutocorrelation (*first, 1000.0, 3000.0, 348);
-    const auto second = recalled (*preset);
+    const auto second = recalled (preset);
     const double at246 = tailAutocorrelation (*second, 1000.0, 3000.0, 246);
-    const auto cycled = recalled (*preset);
+    const auto cycled = recalled (preset);
     cycled->releaseResources();
     cycled->prepare (kSr, kBlock);
     settle (*cycled);
@@ -671,15 +728,15 @@ void checkRendersAsAfterItself (const FactoryPreset& previous, const FactoryPres
 void testFdnDelaysPatch()
 {
     const FactoryPreset* ambience = presetNamed ("Ambience");
-    const FactoryPreset* hall = presetNamed ("Vocal Hall");
-    const FactoryPreset* tiled = presetNamed ("Tiled Room");
-    checkf (ambience != nullptr && hall != nullptr && tiled != nullptr, "Ambience, Vocal Hall and Tiled Room are factory presets");
-    if (ambience == nullptr || hall == nullptr || tiled == nullptr)
+    const FactoryPreset& hall = test::sharedPresetNamed ("Vocal Hall");
+    const FactoryPreset& tiled = test::sharedPresetNamed ("Tiled Room");
+    checkf (ambience != nullptr, "Ambience is a factory preset");
+    if (ambience == nullptr)
         return;
     checkf (enginePatchFor ("Ambience").fdnDelays[0] != 0, "Ambience no longer has its own delays, so this proves nothing");
     checkf (enginePatchFor ("Tiled Room").fdnDelays[0] == 0, "Tiled Room has its own delays now, so this proves nothing");
-    checkRendersAsAfterItself (*hall, *ambience);
-    checkRendersAsAfterItself (*ambience, *tiled);
+    checkRendersAsAfterItself (hall, *ambience);
+    checkRendersAsAfterItself (*ambience, tiled);
 }
 
 // Deep Blue Day turns the Shimmer hall (its engine-patch row's feedback rotation), which Black Hole
@@ -695,6 +752,32 @@ void testFeedbackRotationPatch()
     checkf (enginePatchFor ("Deep Blue Day").fbRotation[0] > 0.0f, "Deep Blue Day no longer turns its hall, so this proves nothing");
     checkf (enginePatchFor ("Black Hole").fbRotation[0] == 0.0f, "Black Hole turns its hall now, so this proves nothing");
     checkRendersAsAfterItself (*dbd, *hole);
+    checkRendersAsAfterItself (*hole, *dbd);
+}
+
+// Black Hole averages its inputs before generating a stereo tail.
+void testBlackHoleWetInput()
+{
+    const auto peak = [] (const FactoryPreset* preset, bool oppositePolarity) {
+        if (preset == nullptr)
+            return -1.0f;
+        auto dsp = recalled (*preset);
+        dsp->clearState();   // start with the mix smoother exactly at 100% wet
+        const auto y = burstResponse (*dsp, oppositePolarity);
+        if (!allFinite (y))
+            return -1.0f;
+        float p = 0.0f;
+        for (float sample : y)
+            p = std::max (p, std::abs (sample));
+        return p;
+    };
+    const auto* hole = presetNamed ("Black Hole");
+    const float mid = peak (hole, false), side = peak (hole, true);
+    const float deepSide = peak (presetNamed ("Deep Blue Day"), true);
+    std::printf ("Wet burst peaks: Black Hole mid %.6g, side %.6g, Deep Blue Day side %.6g\n", mid, side, deepSide);
+    checkf (mid > 0.001f && side >= 0.0f && side < 1.0e-7f && deepSide > 0.001f,
+            "wet burst peaks: Black Hole mid %.6g, side %.6g (expected silence), Deep Blue Day side %.6g",
+            mid, side, deepSide);
 }
 
 // A preset-less swap puts the ParallelMultiband bands back where the shared config leaves a preset
@@ -784,6 +867,19 @@ void testBigDrumRoomRecall()
 
 int main()
 {
+    const char* const additions[] {
+        "Warm Chamber", "Small Wood Room", "Wide Hall", "Large Plate", "Lush Hall Medium",
+        "Tight Live Room", "Vintage Plate", "Medium Chamber", "Vocal Concert Hall", "Studio Hall",
+        "Tight Plate", "Lush Hall Long", "Theater Room", "Vintage Bright Plate", "Dark Chamber",
+        "Concert Hall", "Large Warm Hall", "Small Plate", "Lush Hall Dark", "Dark Drum Room",
+        "Short Vocal Plate"
+    };
+    const auto& programs = dv2FactoryPresets();
+    for (const char* name : additions)
+        checkf (std::count_if (programs.begin(), programs.end(), [name] (const FactoryPreset& preset) {
+            return std::string_view (preset.name) == name && isSectionAlgorithm (preset.algorithm)
+                && sectionRowFor (name, sectionModelFor (preset.algorithm)).name == name;
+        }) == 1, "%s must recall exactly one matching section configuration", name);
     testTable();
     testOverrides();
     testEmission();
@@ -791,12 +887,14 @@ int main()
     testSwapGivesCalibratedDecay();
     testStereoPatch();
     testSectionPresetsOnTheirEngines();
+    testCathedralStereoImpulse();
     testOwnEngineChangeAfterReset();
     testDeferredPresetKeepsTheSoundingRow();
     testDensifierPatch();
     testEnginePatchNames();
     testFdnDelaysPatch();
     testFeedbackRotationPatch();
+    testBlackHoleWetInput();
     testNeutralPmbReset();
     testBigDrumRoomRecall();
     if (failures != 0)

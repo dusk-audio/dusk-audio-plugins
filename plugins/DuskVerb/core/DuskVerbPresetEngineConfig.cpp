@@ -343,6 +343,12 @@ void applyNeutralPmbAndModeSmear (DuskVerbEngine& engine) noexcept
 // runs on the audio thread and only ever reads the already-initialised pointers.
 void primeTuningEnvCache() noexcept { primeParseLocale(); tuningEnv(); }
 
+void applyTankOnsetDelay (DuskVerbEngine& engine, float milliseconds) noexcept
+{
+    const char* env = tuningEnv().tankonset;
+    engine.setTankOnsetMs (env != nullptr && env[0] != '\0' ? parseFloat (env) : milliseconds);
+}
+
 // Per-preset PostTankEQ band centres + Qs (the GAINS are parameters).
 // Hoisted out of the anonymous namespace so DuskVerbDSP::performPresetSwap can
 // cache them for the gain edge-detect; body unchanged.
@@ -388,8 +394,9 @@ static const V* findPresetConfig (const std::array<std::pair<std::string_view, V
 
 // Out-of-line definition of FactoryPreset::applyEngineConfig — placed here
 // where DuskVerbEngine's full type is visible.
-void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
+void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine, bool useDv2ShimmerVoicing) const
 {
+    const bool dv2BlackHole = useDv2ShimmerVoicing && std::string_view (name) == "Black Hole";
     engine.setSixAPDensityBaseline (sixAPDensityBaseline);
     engine.setSixAPBloomCeiling    (sixAPBloomCeiling);
     engine.setSixAPBloomStagger    (sixAPBloomStagger);
@@ -895,6 +902,8 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             if (t.size() == 2) engine.setOutputAirShelf (t.getFloatValue (0), t.getFloatValue (1));
             else               engine.setOutputAirShelf (8000.0f, 0.0f);
         }
+        else if (dv2BlackHole)
+            engine.setOutputAirShelf (13000.0f, 10.0f);
         else if (const auto* e = findPresetConfig (kOutputAirShelfByName, std::string_view (name)))
             engine.setOutputAirShelf (e->freqHz, e->gainDb);
         else
@@ -992,27 +1001,8 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         engine.setDiffuseERHighpass (hpHz);
     }
 
-    // Phase A early-field: tank-onset delay (DenseHall path). Env override
-    // DUSKVERB_TANKONSET="ms" drives the make-or-break sweep without a rebuild;
-    // else 0 (off → bit-null). Per-preset bake (kTankOnsetByName) comes later.
-    {
-        // Phase A front-loaded presets: tail delayed so the ER owns the early
-        // window (moves energy_t50 toward the target). Front-loaded only — back-
-        // loaded presets (Vocal Hall) need the complementary ER-boost (Phase B).
-        // constexpr std::array + linear scan (NOT std::map) — RT-safe on the audio
-        // thread; same pattern as kOutputAirShelfByName. See findPresetConfig().
-        static constexpr std::array<std::pair<std::string_view, float>, 0> kTankOnsetByName = {{
-            // REVERTED 2026-06-15 (ear: 100ms tail delay = audible ER->silence->tail
-            // gap, "sounds like a delay"; the sparse ER can't bridge it). Phase-A
-            // primitive kept (env/map-drivable) but no preset ships it until the ER
-            // is dense enough to fill the gap (Phase B density-ramp).
-        }};
-        const char* env = tuningEnv().tankonset;
-        float ms = 0.0f;
-        if (env != nullptr && env[0] != '\0') ms = duskverb::parseFloat (env);
-        else if (const auto* it = findPresetConfig (kTankOnsetByName, std::string_view (name))) ms = *it;
-        engine.setTankOnsetMs (ms);
-    }
+    // Clear the outgoing preset's tank delay before DuskVerb 2 applies its own voicing.
+    duskverb::applyTankOnsetDelay (engine, 0.0f);
 
     // Per-band Width tilt (setWidthBands): independent low/mid/high stereo width.
     // The global frequency-flat Width traded bands net-negative on the fleet
@@ -2256,8 +2246,13 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         }};
         float downMix = 0.0f;
         const std::string_view nameView (name);
+        const bool deepBlueDay = nameView == "Deep Blue Day";
+        const bool dv2DeepBlueDay = useDv2ShimmerVoicing && deepBlueDay;
+        engine.setShimmerOctaveTiming (dv2DeepBlueDay);
+        engine.setShimmerAirInputHighpass (dv2BlackHole || dv2DeepBlueDay);
         for (const auto& e : kShimmerDownByName)
             if (e.first == nameView) { downMix = e.second; break; }
+        if (dv2DeepBlueDay) downMix = 0.0f;
         if (const char* env = tuningEnv().shimmerdown; env != nullptr && env[0] != '\0')
             downMix = duskverb::parseFloat (env);
         engine.setShimmerDownOctaveMix (downMix);
@@ -2282,6 +2277,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         float subMix = 0.0f, hpfHz = 60.0f;
         for (const auto& e : kShimmerSubByName) if (e.first == nameView) { subMix = e.second; break; }
         for (const auto& e : kShimmerHpfByName) if (e.first == nameView) { hpfHz  = e.second; break; }
+        if (dv2DeepBlueDay) subMix = 1.03f;
         if (const char* env = tuningEnv().shimmersub; env != nullptr && env[0] != '\0')
             subMix = duskverb::parseFloat (env);
         if (const char* env = tuningEnv().shimmerhpf; env != nullptr && env[0] != '\0')
@@ -2327,6 +2323,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         }};
         float airMix = 0.0f;
         for (const auto& e : kShimmerAirByName) if (e.first == nameView) { airMix = e.second; break; }
+        if (dv2BlackHole) airMix = 0.48f;
         if (const char* env = tuningEnv().shimmerair; env != nullptr && env[0] != '\0')
             airMix = duskverb::parseFloat (env);
         engine.setShimmerHFAir (airMix);
@@ -2357,14 +2354,9 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
             useSpin = duskverb::parseInt (env) != 0;
         engine.setShimmerUseTailSpin (useSpin);
 
-        // Per-preset up-voice scale — fills the mid tail (250 Hz-1 kHz) on transients. Deep Blue
-        // Day boosts to match the target's fuller snare-body regeneration. 1.0/1.0 = bit-identical.
-        static constexpr std::array<std::pair<std::string_view, std::pair<float, float>>, 2> kShimmerUpVoiceByName = {{
-            { "Black Hole",    { 1.0f, 1.0f } },
-            { "Deep Blue Day", { 1.0f, 1.0f } },   // tuned by the sweep below
-        }};
-        float upv1 = 1.0f, upv2 = 1.0f;
-        for (const auto& e : kShimmerUpVoiceByName) if (e.first == nameView) { upv1 = e.second.first; upv2 = e.second.second; break; }
+        // Emphasize the first upward voice while keeping the second from dominating the tail.
+        float upv1 = dv2DeepBlueDay ? 2.20f : 1.0f;
+        float upv2 = 1.0f;
         if (const char* env = tuningEnv().shimmerupv; env != nullptr && env[0] != '\0')
         {
             duskverb::Tokens parts (env, ',');
@@ -2372,31 +2364,30 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         }
         engine.setShimmerUpVoiceScale (upv1, upv2);
 
-        // Dry-fed even octave cascade (500/250/125/62 Hz) — Deep Blue Day uses it INSTEAD of the
-        // old feedback down/sub voices (which were subharmonic-masked + the sub ratio was clamped
-        // to −12). All-zero = off/bit-null. Env DUSKVERB_SHIMMEROCT="g500,g250,g125,g62".
-        static constexpr std::array<std::pair<std::string_view, std::array<float, 4>>, 2> kShimmerOctaveByName = {{
-            { "Black Hole",    { 0.0f, 0.0f, 0.0f, 0.0f } },
-            { "Deep Blue Day", { 0.0f, 0.8f, 0.9f, 0.5f } },   // 2026-07-24 g62 0.5->0.9 TESTED+REVERTED: inert on boom sub 40-100 (-2.62->-2.65, gain-match ate it; feed-forward doesn't reach the snare window), 14->14. // 2026-07-04 {0,.5,.5,0}->{0,.8,.9,.5} (EAR, with sub 4.5->1.5): the dry-fed cascade takes over the low warmth the recirculating sub voice used to supply — feed-forward, so it decays WITH the tank and cannot build up. Recovers down-octave cascade L1 + boom vs the plain sub cut (30->27). g500 stays 0 (the +12 up voice already re-pitches 250->500).
-        }};
-        float octGains[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-        for (const auto& e : kShimmerOctaveByName) if (e.first == nameView) { for (int i = 0; i < 4; ++i) octGains[i] = e.second[i]; break; }
+        // The dry-fed voices supply the lower octaves without increasing feedback gain.
+        // Each successive gain is one octave lower. An empty mix disables the cascade.
+        std::array<float, 4> octGains {};
+        if (deepBlueDay)
+            octGains = dv2DeepBlueDay ? std::array<float, 4>{ 0.30f, 0.18f, 0.257f, 0.0f }
+                                      : std::array<float, 4>{ 0.0f, 0.8f, 0.9f, 0.5f };
         if (const char* env = tuningEnv().shimmeroct; env != nullptr && env[0] != '\0')
         {
             duskverb::Tokens parts (env, ',');
             for (int i = 0; i < 4 && i < parts.size(); ++i) octGains[i] = parts.getFloatValue (i);
         }
-        engine.setShimmerOctaveCascade (octGains);
+        engine.setShimmerOctaveCascade (octGains.data());
 
         // Tail noise floor — the dense noise-like fade the target has; masks the sparse-mode ring.
         // gain 0 = off/bit-null. Env DUSKVERB_SHIMMERNOISE.
         struct TailNoiseCfg { float gain, hpHz, lpHz; };
         static constexpr std::array<std::pair<std::string_view, TailNoiseCfg>, 2> kShimmerTailNoiseByName = {{
             { "Black Hole",    { 0.8f, 150.0f, 4500.0f } },   // 2026-07-04: the slow-bloom wash retry (the old 5 ms-attack probes were net-worse) — 27->25 (cent_500 + spec_L1 close) and the wash lifts the dead top: T60-16k 4.0 -> 6.7 s toward the target 9.6.
-            { "Deep Blue Day", { 0.7f, 150.0f, 2800.0f } },   // 2026-07-04 EAR "missing the ocean white noise": 0.7/dark band/slow bloom = gate-neutral, fills the sparse-mode gaps. LP 3500->2800 with the HFS shelf (16k leak trim).
+            { "Deep Blue Day", { 0.7f, 150.0f, 2800.0f } },   // Legacy shimmer voicing.
         }};
         float noiseGain = 0.0f, noiseHp = 250.0f, noiseLp = 7000.0f;
         for (const auto& e : kShimmerTailNoiseByName) if (e.first == nameView) { noiseGain = e.second.gain; noiseHp = e.second.hpHz; noiseLp = e.second.lpHz; break; }
+        if (dv2BlackHole) noiseGain = 0.24f;
+        if (dv2DeepBlueDay) noiseGain = 0.0f;  // Keep the octave tail free of added hiss.
         if (const char* env = tuningEnv().shimmernoise; env != nullptr && env[0] != '\0')
         {
             duskverb::Tokens t (env, ',');
@@ -2418,6 +2409,11 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         }};
         float hfsDb = 0.0f, hfsHz = 4000.0f;
         for (const auto& e : kShimmerHFSustainByName) if (e.first == nameView) { hfsDb = e.second.first; hfsHz = e.second.second; break; }
+        if (dv2DeepBlueDay)
+        {
+            hfsDb = 10.0f;
+            hfsHz = 9500.0f;
+        }
         if (const char* env = tuningEnv().shimmerhfs; env != nullptr && env[0] != '\0')
         {
             duskverb::Tokens toks (env, ',');
@@ -2443,6 +2439,7 @@ void FactoryPreset::applyEngineConfig (DuskVerbEngine& engine) const
         }};
         float outHead = 1.0f;
         for (const auto& e : kShimmerOutHeadroomByName) if (e.first == nameView) { outHead = e.second; break; }
+        if (dv2BlackHole) outHead = 4.0f;
         if (const char* env = tuningEnv().shimmerhead; env != nullptr && env[0] != '\0')
             outHead = duskverb::parseFloat (env);
         engine.setShimmerOutputHeadroom (outHead);

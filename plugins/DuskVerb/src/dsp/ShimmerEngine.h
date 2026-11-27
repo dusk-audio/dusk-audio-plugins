@@ -9,37 +9,13 @@
 #include <cmath>
 #include <vector>
 
-// ShimmerEngine v9: pitch shifter sits in the
-// FEEDBACK loop only, not on the forward path. The reverb sees the dry
-// input directly, so the first wet hit is a natural reverb tail at the
-// original pitch. Pitched reverb is added on top of that natural tail
-// via the feedback cascade.
+// The hall receives the driven input at its original pitch. Pitch-shifted wet
+// audio returns through a feedback delay. Deep Blue Day also excites its upper
+// voices from the input and feeds three progressively spread lower octaves
+// into the hall. Its longer upper return sets the spacing of repeated shifts.
 //
-// Per-sample signal flow:
-//
-//   in ──> [drive softClip] ──┐
-//                             ↓
-//                         [+ mix node] ──> [FDNReverb hall] ──┬──> wet out
-//                             ↑                                │
-//                             │                                ↓
-//   (pitched fb × fb × softClip) ←── [PitchShifter +N] ←── [delay 50 ms]
-//
-// Why this fixes "doesn't sound like reverb":
-//   v8 (aux-send chain) put the pitch shifter on the FORWARD path,
-//   so the very first reverb hit was already pitched up — the wet output
-//   was 100% pitched-cascade, with no natural reverb component anywhere.
-//   That's only musical when the dry source is loud in the listener's
-//   mix (the aux-send use case), but as a "shimmer reverb" plugin where
-//   mix=80% means dry sits at -10 dB while wet dominates, the listener
-//   hears only pitched-cascade-of-pitched-cascade and no real tail.
-//   v9: dry input goes straight through the reverb (natural
-//   tail), and the pitch shifter is in the feedback loop only, adding
-//   the shimmer harmonics on top. At PITCH=0, the engine collapses to
-//   an enhanced reverb with feedback-driven tail extension.
-//
-// The 50 ms feedback delay is unchanged from the v8 fix — it's a true
-// circular buffer decoupled from DAW block size, sized for one feedback
-// "cycle" of the cascade.
+// The tank runs a block at a time. Each feedback delay holds at least a full
+// block so that the block's reads finish before the tank writes its return.
 //
 // Knob mapping (engine sees the universal setters but reinterprets):
 //   setDecayTime      → reverb RT60 (0.5 - 8 s)
@@ -85,6 +61,8 @@ public:
     void setReverbFeedbackRotation (float peakRad, float rateHz);   // its FDN hall's time-varying feedback matrix (DuskVerbEngine::setFeedbackRotation reaches it); 0 = off
     void setStereoMod         (float rateHz, float depth);  // wet-output stereo chorus/ensemble (anti-phase modulated delay); depth 0 = bypassed/bit-null. Gives Black Hole its moving stereo field.
     void setHFAir             (float mix);   // post-loop +12 st air voice (genuine >12 kHz air); mix 0 = bit-null
+    void setAirInputHighpass (bool enabled) { air_.setInputHighpass (enabled); }
+    void setOctaveTiming (bool enabled);
     void setModeSmear         (float depthSamples, float rateHz);  // deep+slow FDN mode-smear on the reverb tail (anti-boing); depth 0 = off/bit-null
     // In-loop sustained-energy limiter in the internal reverb tank(s) (SustainBandLimiter.h).
     // The shimmer's OWN pitch loop is untouched (needs a ratio-keyed detector — later).
@@ -117,19 +95,17 @@ private:
     // ──────────────────────────────────────────────────────────────────
     // GranularPitchShifter — overlapping-grain pitch shift via crossfaded
     // dual-grain reads. 4096-sample grains, 50% overlap, Hann window.
-    // 4-pole Butterworth anti-alias LP at SR/2/ratio prevents alias
-    // accumulation in the feedback loop. Same implementation that was
-    // proven in v6 — kept as-is, this is the part of the prior engine
-    // that worked correctly.
+    // A 4-pole Butterworth low-pass limits aliasing in the feedback loop.
     // ──────────────────────────────────────────────────────────────────
     class GranularPitchShifter
     {
     public:
         static constexpr int kGrainSize = 4096;
 
-        void prepare (double sampleRate);
+        void prepare (double sampleRate, float historyMs = 0.0f, const std::vector<float>* timedWindow = nullptr);
         void clear();
         void setPitchRatio (float ratio);
+        void setTimedHistory (bool enabled);
         // rateHz: LFO speed of the slow random-walk modulation applied to
         //   the per-sample read advancement. Different rates on L vs R give
         //   stereo decorrelation and prevent sharp peak buildup.
@@ -139,6 +115,10 @@ private:
         float process (float input);
 
     private:
+#if defined(DUSKVERB2_OPTIMIZED_DSP)
+        const float* grainWindow_ = nullptr;
+        const float* legacyWindow_ = nullptr;
+#endif
         struct BiquadLP
         {
             float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f;
@@ -156,6 +136,9 @@ private:
         };
 
         void updateAntiAliasCutoff();
+        float grainLookback() const;
+        void resetGrains();
+        void selectGrainWindow();
         void startNewGrain (int& phase, float& readPos);
         float readLinear (float pos) const;
 
@@ -167,9 +150,15 @@ private:
         float readPos1_ = 0.0f;
         float readPos2_ = static_cast<float> (kGrainSize) * 0.5f;
         float pitchRatio_ = 1.0f;
+        static constexpr int kLegacyCapacity = 8 * kGrainSize;
+        const float* timedWeights_ = nullptr;
+        int timedGrainSize_ = kGrainSize;
+        int grainSize_ = kGrainSize;
+        int historySamples_ = 0;
+        bool timedHistory_ = false;
         double sampleRate_ = 44100.0;
         BiquadLP aaStage1_, aaStage2_;
-        DspUtils::RandomWalkLFO ratioMod_;
+        DspUtils::RandomWalkLFO ratioMod_, initialRatioMod_;
         float ratioModDepth_ = 0.0f;
         bool  ratioModEnabled_ = false;
         static constexpr float kButterworthQ1 = 0.5411961f;
@@ -182,6 +171,25 @@ private:
 
     // Pitch shifters — one per channel for natural stereo independence.
     GranularPitchShifter pitchL_, pitchR_;
+    bool timedOctaves_ = false;
+    float firstUpperReturnGain_ = 1.30f, secondUpperReturnGain_ = 0.50f;
+    float firstUpperInputGain_ = 0.48f, secondUpperInputGain_ = 1.0f;
+    float lowerOctaveScale_ = 1.0f;
+
+    // Three reflections feed the next lower octave. Their successive delays
+    // spread the buildup over time without adding gain to the feedback loop.
+    struct OctaveSpread
+    {
+        void prepare (double sampleRate, float lengthMs);
+        void clear();
+        float process (float sample);
+
+        std::vector<float> delay;
+        int write = 0, middleOffset = 0;
+    };
+    static constexpr int kTimedStages = 3;
+    std::array<OctaveSpread, kTimedStages> octaveSpreads_;
+    std::vector<float> timedGrainWindow_;
 
     // SECOND pitch voice — an octave ABOVE voice 1 (2026-05-31). A single
     // granular voice + its anti-alias filter (cutoff = nyquist/ratio ≈ 12 kHz
@@ -276,18 +284,8 @@ private:
     std::vector<float> reverbInL_, reverbInR_;
     std::vector<float> wetL_, wetR_;
 
-    // Feedback delay line — true circular buffer sized for a fixed 50 ms
-    // acoustic delay (sampleRate × 0.050). Decoupling the feedback delay
-    // from the DAW block size is critical: indexing a "previous-block"
-    // buffer by sample-within-block creates a delay of exactly blockSize
-    // samples, which builds a violent comb filter tuned to the block rate
-    // (e.g. ≈172 Hz at 256-sample blocks). Once the pitch shifter pitches
-    // up that comb's harmonic ladder, the cascade turns into a metallic
-    // ring instead of musical reverb.
-    //
-    // 50 ms (≈20 Hz cutoff) is short enough to feel like a tight cascade
-    // loop yet long enough that any residual comb is sub-audible and
-    // hidden by the reverb's smear + the pitch shifter's grain windowing.
+    // Circular stereo wet history. The regular return uses 50 ms. The timed
+    // upper voices read a longer interval from the same buffer.
     std::vector<float> fbDelayLineL_, fbDelayLineR_;
     int fbDelaySamples_  = 0;
     int fbDelayWritePos_ = 0;
@@ -517,14 +515,20 @@ private:
         GranularPitchShifter shifterL, shifterR;   // +12 st (ratio 2): 6-12k → 12-24k air
         OnePole tapHpL, tapHpR;                    // ~6 kHz HP: feed only the wet HF to the shifter
         OnePole airHpL, airHpR;                    // ~11 kHz HP: keep only the pitched-up air
+        float inputLowState[2] {}, inputPole = 0.0f;
+        bool inputHighpass = false;
         float mix = 0.0f; bool active = false;
-        void prepare (double sr)
+        void prepare (double sr, float returnMs, const std::vector<float>& timedWindow)
         {
-            shifterL.prepare (sr); shifterR.prepare (sr);
+            // The air octave emerges from the late return in the timed voicing.
+            shifterL.prepare (sr, returnMs, &timedWindow);
+            shifterR.prepare (sr, returnMs, &timedWindow);
             shifterL.setPitchRatio (2.0f); shifterR.setPitchRatio (2.0f);
             shifterL.setModulation (5.1f, 0.012f, 0xA11A1Au); shifterR.setModulation (6.3f, 0.012f, 0xA11A1Bu);
             const float s = static_cast<float> (sr);
             tapHpL.setHPCutoff (6000.0f, s); tapHpR.setHPCutoff (6000.0f, s);
+            const float g = std::tan (3.14159265359f * std::min (6000.0f, 0.4f * s) / (2.0f * s));
+            inputPole = g / (1.0f + g);
             airHpL.setHPCutoff (11000.0f, s); airHpR.setHPCutoff (11000.0f, s);
             clear();
         }
@@ -532,8 +536,41 @@ private:
         {
             shifterL.clear(); shifterR.clear();
             tapHpL.clear(); tapHpR.clear(); airHpL.clear(); airHpR.clear();
+            clearInputFilter();
+        }
+        void clearInputFilter()
+        {
+            inputLowState[0] = inputLowState[1] = 0.0f;
+        }
+        void setInputHighpass (bool enabled)
+        {
+            if (enabled != inputHighpass)
+            {
+                clearInputFilter();
+                inputHighpass = enabled;
+            }
         }
         void setMix (float m) { mix = std::clamp (m, 0.0f, 4.0f); active = mix > 1.0e-6f; }
+        void filterInput (float& wL, float& wR) noexcept
+        {
+            if (inputHighpass)
+            {
+                const auto filter = [this] (int ch, float input) {
+                    // The air envelope and octave share the two-phase HP output.
+                    // Hold the wet sample for two internal steps and average to decimate.
+                    const auto phase = [&] {
+                        const float delta = input - inputLowState[ch];
+                        const float lowStep = inputPole * delta;
+                        inputLowState[ch] += 2.0f * lowStep;
+                        return delta - lowStep;
+                    };
+                    const float first = phase();
+                    return 0.5f * (first + phase());
+                };
+                wL = filter (0, wL);
+                wR = filter (1, wR);
+            }
+        }
         inline void process (float wL, float wR, float& addL, float& addR)
         {
             addL += mix * airHpL.processHP (shifterL.process (tapHpL.processHP (wL)));

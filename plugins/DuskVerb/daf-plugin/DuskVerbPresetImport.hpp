@@ -205,7 +205,7 @@ inline bool decodeJucePreset(std::string_view xml, StateValues& out)
         if (!validUserName(textValue)) return false;
         decoded.userName = textValue;
     }
-    if (rootAttr("lastPresetName", textValue)) decoded.presetName = textValue;
+    if (rootAttr("lastPresetName", textValue)) decoded.presetName = currentFactoryName(textValue);
     static constexpr const char* const sixNames[10] = {
         "sixAPDensityBaseline", "sixAPBloomCeiling", "sixAPEarlyMix", "sixAPOutputTrim",
         "sixAPBloomStagger0", "sixAPBloomStagger1", "sixAPBloomStagger2", "sixAPBloomStagger3",

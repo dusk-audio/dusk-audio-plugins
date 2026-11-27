@@ -157,8 +157,8 @@ inline constexpr const char* const kAlgorithmLabels[kNumAlgorithmSlots] = {
     "Vintage Hall", "Reverse", "Hall", "Sparse",
     "Concert Hall", "Tiled Room", "Dense Hall", "Parallel Hall",
     "Nonlinear", "Room", "Chamber II", "Vintage Plate II",
-    "Reserved", "Reserved", "Reserved", "Reserved",
-    "Reserved", "Reserved", "Reserved", "Reserved",
+    "Hall II", "Compact Plate", "Studio Plate", "Modulated Hall",
+    "Auditorium", "Reserved", "Reserved", "Reserved",
     "Reserved", "Reserved", "Reserved", "Reserved"
 };
 inline constexpr const char* const kPreDelaySyncLabels[7] = {

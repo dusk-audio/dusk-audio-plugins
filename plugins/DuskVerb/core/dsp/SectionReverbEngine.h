@@ -1,7 +1,8 @@
 // Copyright (C) 2026 Dusk Audio, GNU GPL v3.0 or later (see repository LICENSE).
 //
-// SectionReverbEngine: DuskVerb 2's room, chamber and vintage plate, one engine with a table per
-// model.
+// SectionReverbEngine shares the early stages, modulation and output filters across seven models.
+// The modulated hall uses nested allpasses. The auditorium has a separate modulated tail
+// and applies its input diffusion after the spread taps.
 //
 //   input -> input diffusers (two or three allpasses per side, scaled by Diffusion; at 0 pure
 //            delays; the line models' echo feedback is added ahead of them)
@@ -11,9 +12,9 @@
 //                       the early output, read after the reverb pre-delay (the right side 439
 //                       samples at 44.1 kHz later), feeds the sections; Reverse plays the
 //                       pattern back to front
-//              Chamber, Vintage Plate: a long line per side. Five spread taps per side, at
+//              Chamber, Vintage Plate, Hall: a long line per side. Five spread taps per side, at
 //                       Spread times their offsets plus the pre-delay and levelled by Shape,
-//                       feed the sections (the chamber's fifth goes straight to the reverb
+//                       feed the sections (the chamber and hall's fifth goes straight to the reverb
 //                       output); reflections and echoes read the line into the early output,
 //                       the echoes' feedback goes back to the input
 //         -> sections chained into one loop (two in the room, six in the others). Per section,
@@ -39,6 +40,9 @@
 
 #pragma once
 
+#include "AuditoriumTail.hpp"
+#include "NestedSection.hpp"
+
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -46,8 +50,8 @@
 namespace duskverb
 {
 
-enum class SectionReverbModel : int { Room = 0, Chamber = 1, VintagePlate = 2 };
-inline constexpr int kSectionReverbModels = 3;
+enum class SectionReverbModel : int { Room = 0, Chamber = 1, VintagePlate = 2, Hall = 3, StudioPlate = 4, ModulatedHall = 5, Auditorium = 6 };
+inline constexpr int kSectionReverbModels = 7;
 
 // An output filter: type 0 one-pole low-pass, 1 one-pole high-pass, 2 low-pass, 3 high-pass,
 // 4 band-pass, 5 notch (2-5 biquads); the shelf blends the unfiltered signal back in
@@ -101,6 +105,9 @@ struct SectionReverbConfig
     float reverbLevelDb = -14.0f;
     SectionReverbFilter reverbFilter { 0, 19000.0f, 3.0f, -96.0f };
 
+    float definition = 38.0f, chorusRate = 4.0f, chorusDepth = 58.0f;
+    int chorusType = 0;
+
     // Room
     int   pattern = 0;               // index into kSectionPatterns
     float earlyPredelayMs = 0.0f;
@@ -110,7 +117,7 @@ struct SectionReverbConfig
     float roomBassBoostDb = 3.0f;
     int   reverse = 0;               // 1: the early pattern back to front
 
-    // Chamber, Vintage Plate
+    // Chamber, Vintage Plate, Hall
     float predelayMs = 20.0f;
     float shape = 16.0f;             // 0..64
     float spread = 30.0f;            // percent
@@ -125,31 +132,6 @@ struct SectionReverbConfig
 
 namespace sectionreverb
 {
-
-struct Rate
-{
-    float sr = 48000.0f, invSr = 1.0f / 48000.0f, srMs = 48.0f, srScale = 48000.0f / 44100.0f;
-    float lenScale = 48000.0f / 44100.0f, sr32 = 1500.0f, nyquist = 24000.0f;
-    static Rate make (double sampleRate) noexcept;
-};
-
-// A value stepped once per 32-sample block toward its target.
-class Ramp
-{
-public:
-    void reset (float value) noexcept;
-    void setTarget (float target, float msPerUnit, const Rate& rate) noexcept;
-    // A ramp to a new target, a snap when the value is already there.
-    void arm (float target, float msPerUnit, const Rate& rate) noexcept;
-    void advanceBlock() noexcept;
-    float current() const noexcept { return current_; }
-    float target() const noexcept { return target_; }
-    bool ramping() const noexcept { return blocksLeft_ != 0; }
-
-private:
-    float target_ = 0.0f, current_ = 0.0f, step_ = 0.0f;
-    std::uint32_t blocksLeft_ = 0;
-};
 
 class OutputFilter
 {
@@ -247,6 +229,7 @@ private:
 
     struct Section
     {
+        sectionreverb::NestedSection nested;
         std::vector<float> ring, rawRing;
         std::uint32_t length = 0, write = 0, morphA = 0, morphB = 0, apIdx = 0, apDelay = 0;
         std::uint32_t maxDelay = 0, morphOffset = 0;
@@ -278,12 +261,15 @@ private:
     void reset() noexcept;
     void apply (const SectionReverbConfig& next) noexcept;
     void processBlock() noexcept;
+    bool auditoriumModel() const noexcept { return config_.model == static_cast<int> (SectionReverbModel::Auditorium); }
+    bool nestedModel() const noexcept { return config_.model == static_cast<int> (SectionReverbModel::ModulatedHall); }
+    int spreadTapCount() const noexcept { return auditoriumModel() ? 4 : kSpreadTaps; }
     bool roomModel() const noexcept { return config_.model == static_cast<int> (SectionReverbModel::Room); }
 
     // Input diffusers.
     void setStage1ReadHeads (bool snap) noexcept;
     void advanceStage1Size() noexcept;
-    void stage1Block() noexcept;
+    void stage1Block(const float input[2][kBlock]) noexcept;
 
     // Room: early pattern and the tail feed.
     unsigned roomPredelaySamples (bool early) const noexcept;
@@ -300,7 +286,7 @@ private:
     void positionSpreadTap (unsigned k) noexcept;
     void advanceSpread() noexcept;
     void updateVoices (bool snap) noexcept;
-    void lineBlock() noexcept;
+    void lineBlock(const float input[2][kBlock]) noexcept;
 
     // Tail.
     float sizeScale() const noexcept { return config_.sizeMeters * 0.25f; }
@@ -332,6 +318,8 @@ private:
     void mixBlock() noexcept;
 
     Rate rate_;
+    sectionreverb::AuditoriumTail auditorium_;
+    float previousWetPeak_ = 0.0f;
     SectionReverbConfig config_ {};
     bool ranSinceClear_ = false;
     bool prepared_ = false;

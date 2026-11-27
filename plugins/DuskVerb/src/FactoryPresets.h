@@ -4,6 +4,7 @@
 #include <string_view>
 #include <vector>
 #include "dsp/DspUtils.h"
+#include "VocalPlateCalibration.h"
 
 // Forward declaration — applyEngineConfig() needs to call SixAPTank-specific
 // setters on DuskVerbEngine without dragging the engine header into every
@@ -503,10 +504,8 @@ struct FactoryPreset
         setIfExists ("bass_shelf_transition_ms", 100.0f);
     }
 
-    // Apply engine-specific (non-APVTS) tunables. Currently only the
-    // SixAPTank brightness/density fields. Defined out-of-line in
-    // PluginProcessor.cpp where DuskVerbEngine's full type is visible.
-    void applyEngineConfig (DuskVerbEngine& engine) const;
+    // Install the preset's engine settings, including its format-specific shimmer voicing.
+    void applyEngineConfig (DuskVerbEngine& engine, bool useDv2ShimmerVoicing = false) const;
 };
 
 inline const std::vector<FactoryPreset>& getFactoryPresets()
@@ -529,7 +528,7 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         // energy/decay deficit — not closable by uniform FDN damping.
         { "Vocal Plate",          "Plates",
           10, 0.35f, false, 18.8f, 0,   // algo 10 = AccurateHall (2026-06-09): per-octave GEQ T60. T60 6/9->9/9, gain-matched full_check 25->14 vs FDN. Octave targets in kAccurateHallT60ByName.
-          0.689f, 0.15f, 0.37f, 1.51f, 1.281f, 1.028f, 392.516f,  // 2026-06-24 Decay knob 0.849->0.689 = realized broadband RT60 (honest knob; AccurateHall decayRef auto-tracks the knob so scale stays 1.0 -> octave T60 table + sound UNCHANGED).  // T60 decay tune 2026-06-08 (gain-matched): Decay 1.02->0.90 + Treble 0.85->0.60 closes T60 6/9 (63/250/500/2k/4k/8k match the target, tail_t60 within 3%). Hi-Mid PINNED 0.85 via kFiveBandByName so the air band isn't double-damped. Residual 125/1k/16k = single-octave anomalies (9-octave-vs-5-band wall).
+          0.689f, 0.15f, duskverb::vocalplate::modDepth, duskverb::vocalplate::modRate, 1.281f, 1.028f, 392.516f,  // 2026-06-24 Decay knob 0.849->0.689 = realized broadband RT60 (honest knob; AccurateHall decayRef auto-tracks the knob so scale stays 1.0 -> octave T60 table + sound UNCHANGED).  // T60 decay tune 2026-06-08 (gain-matched): Decay 1.02->0.90 + Treble 0.85->0.60 closes T60 6/9 (63/250/500/2k/4k/8k match the target, tail_t60 within 3%). Hi-Mid PINNED 0.85 via kFiveBandByName so the air band isn't double-damped. Residual 125/1k/16k = single-octave anomalies (9-octave-vs-5-band wall).
           0.58f, 0.25f, 0.76f, 30.0f, 17597.191f, 0.98f, false, 1.88f,  // 2026-06-28 Width 1.02->0.98: closes stereo_corr (DV -0.16 vs target -0.04, too wide) -> 19->18.  // 2026-06-14 Phase-3 match-EQ: gainTrim re-matched (+1.88) after the output match-EQ cut (26->20). Lo Cut 30 keeps the lows.
           /* mono */ 20.0f, /* mid */ 1.33f, /* highX */ 2196.609f, /* sat */ 0.03f, /* hiCutShelfGainDb */ -5.774f },
         // ═══════════ PLATES ═══════════
@@ -919,16 +918,8 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //       LR jitter) + Hi Cut 10 kHz / damping 1.0 (HF preserved) +
         //       erLevel 1.0 (bright ER burst) + highX 5 kHz.
         //
-        // 2026-05-25 re-target: prior preset used Dattorro (algo 0) at 9 s
-        // decay — wrong engine for a Random Hall topology. Migrated to FDN
-        // (algo 4) with random-hall target params:
-        //   RT60 5.47 s, size 69 m, diffusion 100 %, bass RT 1.5×,
-        //   bass crossover 360 Hz, HF RT cut 4500 Hz, mod rate 2.2 Hz, wander 22 ms,
-        //   predelay 25 ms.
-        //
-        // Defining random-hall character: dense diffusion + extended bass
-        // + aggressive HF damp + heavy modulation (wander 22 ms = LARGE per-
-        // line wander, the "Random" in Random Hall).
+        // The 2026-05-25 FDN configuration combined dense diffusion, extended
+        // bass and strong high-frequency damping with 22 ms of per-line wander.
         // Calibrated 2026-05-25: cent_50 −6.2 % vs target
         // (within strict ±10 %), cent_500 −15.4 % (FDN engine
         // ceiling on late-tail HF retention; a multi-tap
@@ -1235,8 +1226,6 @@ inline const std::vector<FactoryPreset>& getFactoryPresets()
         //       cuts (e.g. 6.5 kHz) collapsed the >12 kHz tail to silence.
         //     - modRate = 0.60 Hz — slight LFO movement adds shimmer; was
         //       0.40 Hz which felt too still.
-        // Differs from "Infinite Blackhole" (18 s, 6-AP
-        // with heavy modulation) by being shorter and less modulated.
         // Engine-config overrides (sixAP*) close the >12 kHz late-tail gap
         // (was 16 dB cold vs target) by injecting more bright ParallelDiffuser
         // content directly into the output (kEarlyMix 0.5→0.75) and letting

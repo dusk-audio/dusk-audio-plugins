@@ -93,6 +93,79 @@ constexpr ModelTable kModels[kSectionReverbModels] = {
           { { 0, 70, 1, 1 }, { 1, 196, 3, 1 }, { 0, 318, 3, 1 }, { 1, 404, 1, 1 }, { 0, 579, 0, 1 }, { 1, 674, 2, 1 }, { 0, 800, 2, 1 } } },
         { 850, 285, 2, 7, { kNoInput, kNoInput, { 1, 0 }, kNoInput },
           { { 1, 34, 2, 1 }, { 0, 154, 3, 1 }, { 1, 346, 0, 1 }, { 0, 438, 1, 1 }, { 1, 590, 1, 1 }, { 0, 626, 3, 1 }, { 1, 788, 3, 1 } } } } },
+    // Hall
+    { 32.0f, false, 2, { { { 38, 0.75f }, { 89, 0.656f } }, { { 45, 0.75f }, { 74, 0.656f } } },
+      true, 4, { { 0, 0, 0 }, { 0, 1, 0 }, { 1, 1, 0 }, { 1, 0, 0 } }, 0, {}, 14.75f, 0.55f, true, 6,
+      { { 817, 153, 0, 7, { { 1, 3 }, kNoInput, { 0, 0 }, kNoInput },
+          { { 0, 28, 0, 0 }, { 1, 150, 1, 0 }, { 0, 304, 2, 0 }, { 1, 413, 3, 1 }, { 0, 484, 1, 1 }, { 1, 604, 2, 1 }, { 0, 737, 3, 1 } } },
+        { 747, 89, 1, 7, { { 1, 2 }, kNoInput, kNoInput, kNoInput },
+          { { 1, 35, 3, 0 }, { 0, 180, 2, 0 }, { 1, 290, 1, 0 }, { 0, 381, 0, 1 }, { 1, 463, 0, 1 }, { 0, 618, 3, 1 }, { 1, 690, 2, 1 } } },
+        { 944, 249, 2, 7, { { 1, 1 }, kNoInput, kNoInput, kNoInput },
+          { { 0, 39, 1, 0 }, { 1, 170, 2, 0 }, { 0, 328, 3, 0 }, { 1, 474, 0, 1 }, { 0, 556, 2, 1 }, { 1, 739, 0, 1 }, { 0, 887, 0, 1 } } },
+        { 803, 141, 0, 7, { { 0, 3 }, kNoInput, { 1, 0 }, kNoInput },
+          { { 1, 72, 0, 0 }, { 0, 132, 3, 0 }, { 1, 258, 2, 0 }, { 0, 417, 1, 1 }, { 1, 550, 3, 1 }, { 0, 642, 1, 1 }, { 1, 778, 1, 1 } } },
+        { 728, 81, 1, 7, { { 0, 2 }, kNoInput, kNoInput, kNoInput },
+          { { 0, 33, 2, 0 }, { 1, 146, 1, 0 }, { 0, 226, 0, 0 }, { 1, 358, 3, 1 }, { 0, 501, 1, 1 }, { 1, 553, 1, 1 }, { 0, 670, 3, 1 } } },
+        { 911, 283, 2, 7, { { 0, 1 }, kNoInput, kNoInput, kNoInput },
+          { { 1, 95, 3, 0 }, { 0, 218, 0, 0 }, { 1, 372, 1, 0 }, { 0, 471, 2, 1 }, { 1, 573, 0, 1 }, { 0, 685, 0, 1 }, { 1, 829, 2, 1 } } } } },
+    { 26.0f, false, 3, {
+        {{45, -0.75f}, {74, -0.656f}, {7, -0.656f}},
+        {{61, -0.75f}, {39, -0.656f}, {10, -0.656f}},
+    },
+    true,
+    2, {{0, 0, 0}, {1, 1, 0}},
+    2, {{0, 0, 0}, {1, 1, 1}},
+    13.2f, -0.5f, false, 6,
+    {
+        { 728, 228, 0, 7,
+          {{1, 3}, {-1, 0}, {0, 0}, {-1, 0}},
+          {{0, 26, 0, 1}, {1, 134, 1, 1}, {0, 288, 2, 1}, {1, 376, 3, 1}, {0, 472, 3, 1}, {1, 539, 0, 1}, {0, 658, 1, 1}} },
+        { 972, 117, 1, 7,
+          {{1, 2}, {-1, 0}, {-1, 0}, {-1, 0}},
+          {{1, 46, 2, 1}, {0, 240, 1, 1}, {1, 300, 0, 1}, {0, 496, 3, 1}, {1, 582, 1, 1}, {0, 811, 2, 1}, {1, 927, 3, 1}} },
+        { 850, 428, 2, 7,
+          {{1, 1}, {-1, 0}, {-1, 0}, {-1, 0}},
+          {{0, 97, 2, 1}, {1, 163, 3, 1}, {0, 278, 0, 1}, {1, 434, 1, 1}, {0, 524, 1, 1}, {1, 647, 0, 1}, {0, 747, 3, 1}} },
+        { 850, 226, 0, 7,
+          {{0, 3}, {-1, 0}, {1, 0}, {-1, 0}},
+          {{1, 62, 0, 1}, {0, 213, 3, 1}, {1, 296, 2, 1}, {0, 379, 1, 1}, {1, 530, 3, 1}, {0, 704, 0, 1}, {1, 802, 1, 1}} },
+        { 850, 129, 1, 7,
+          {{0, 2}, {-1, 0}, {-1, 0}, {-1, 0}},
+          {{0, 70, 1, 1}, {1, 196, 3, 1}, {0, 318, 3, 1}, {1, 404, 1, 1}, {0, 579, 0, 1}, {1, 674, 2, 1}, {0, 800, 2, 1}} },
+        { 850, 285, 2, 7,
+          {{0, 1}, {-1, 0}, {-1, 0}, {-1, 0}},
+          {{1, 34, 2, 1}, {0, 154, 3, 1}, {1, 346, 0, 1}, {0, 438, 1, 1}, {1, 590, 1, 1}, {0, 626, 3, 1}, {1, 788, 3, 1}} },
+    } },
+    { 40.0f, false, 2, {
+        {{38, 0.75f}, {89, 0.656f}},
+        {{45, 0.75f}, {74, 0.656f}},
+    },
+    true,
+    4, {{0, 0, 0}, {0, 1, 0}, {1, 1, 0}, {1, 0, 0}},
+    0, {},
+    13.0f, 0.55f, false, 6,
+    {
+        { 817, 153, 0, 7,
+          {{1, 3}, {-1, 0}, {0, 0}, {-1, 0}},
+          {{0, 28, 0, 1}, {1, 150, 1, 1}, {0, 304, 2, 1}, {1, 413, 3, 1}, {0, 484, 1, 1}, {1, 604, 2, 1}, {0, 737, 3, 1}} },
+        { 747, 89, 1, 7,
+          {{1, 2}, {-1, 0}, {-1, 0}, {-1, 0}},
+          {{1, 35, 3, 1}, {0, 180, 2, 1}, {1, 290, 1, 1}, {0, 381, 0, 1}, {1, 463, 0, 1}, {0, 618, 3, 1}, {1, 690, 2, 1}} },
+        { 944, 249, 2, 7,
+          {{1, 1}, {-1, 0}, {-1, 0}, {-1, 0}},
+          {{0, 39, 1, 1}, {1, 170, 2, 1}, {0, 328, 3, 1}, {1, 474, 0, 1}, {0, 556, 2, 1}, {1, 739, 0, 1}, {0, 887, 0, 1}} },
+        { 803, 141, 0, 7,
+          {{0, 3}, {-1, 0}, {1, 0}, {-1, 0}},
+          {{1, 72, 0, 1}, {0, 132, 3, 1}, {1, 258, 2, 1}, {0, 417, 1, 1}, {1, 550, 3, 1}, {0, 642, 1, 1}, {1, 778, 1, 1}} },
+        { 728, 81, 1, 7,
+          {{0, 2}, {-1, 0}, {-1, 0}, {-1, 0}},
+          {{0, 33, 2, 1}, {1, 146, 1, 1}, {0, 226, 0, 1}, {1, 358, 3, 1}, {0, 501, 1, 1}, {1, 553, 1, 1}, {0, 670, 3, 1}} },
+        { 911, 283, 2, 7,
+          {{0, 1}, {-1, 0}, {-1, 0}, {-1, 0}},
+          {{1, 95, 3, 1}, {0, 218, 0, 1}, {1, 372, 1, 1}, {0, 471, 2, 1}, {1, 573, 0, 1}, {0, 685, 0, 1}, {1, 829, 2, 1}} },
+    } },
+    { 38.0f, false, 2, { { {72, 0.75f}, {116, 0.65625f} }, { {84, 0.75f}, {139, 0.65625f} } },
+      true, 2, {{0, 0, 0}, {1, 1, 0}}, 0, {}, -1.5f, 0, false, 0, {} },
 };
 
 const ModelTable& modelTable (int model) noexcept
@@ -138,6 +211,16 @@ float tablePass (int model) noexcept
 }
 
 // ---- DSP helpers ----
+
+float nestedMaxGain(float size) noexcept
+{
+    constexpr float sizes[] {2, 3, 4, 8, 12, 16, 20, 24, 28, 32};
+    constexpr float gains[] {.83f, .88f, .935f, .962f, .975f, .9817f, .985f, .9871f, .989f, .99f};
+    for (unsigned i = 1; i < std::size(sizes); ++i)
+        if (size <= sizes[i])
+            return gains[i-1] + (gains[i] - gains[i-1]) * (size - sizes[i-1]) / (sizes[i] - sizes[i-1]);
+    return gains[std::size(gains)-1];
+}
 
 float onePoleCoeff (float hz, const Rate& rate) noexcept
 {
@@ -702,12 +785,18 @@ SectionReverbConfig SectionReverbEngine::sanitized (const SectionReverbConfig& i
         f->shelfDb = std::clamp (finite (f->shelfDb, -96.0f), -96.0f, 12.0f);
     }
 
+    c.definition = std::clamp (finite (c.definition, d.definition), 0.0f, 100.0f);
+    c.chorusDepth = std::clamp (finite (c.chorusDepth, d.chorusDepth), 0.0f, 100.0f);
+    c.chorusRate = std::round (std::clamp (finite (c.chorusRate, d.chorusRate), 0.0f, 10.0f));
+    c.chorusType = std::clamp (c.chorusType, 0, 2);
     c.pattern = std::clamp (c.pattern, 0, kSectionPatternCount - 1);
     c.earlyPredelayMs = std::clamp (finite (c.earlyPredelayMs, 0.0f), 0.0f, 1000.0f);
     c.reverbPredelayMs = std::clamp (finite (c.reverbPredelayMs, 0.0f), 0.0f, 1000.0f);
     {
         const float scale = std::clamp (finite (c.roomScale, d.roomScale), 0.5f, 2.0f);
-        const float normalized = std::round ((scale - 0.5f) * 10.0f) / 15.0f;
+        // Round to float at each scale step in fast-math builds.
+        const int step = static_cast<int> (std::round ((scale - 0.5f) * 10.0f));
+        const float normalized = static_cast<float> (static_cast<double> (step) / 15.0);
         c.roomScale = static_cast<float> (0.5 + 1.5 * double (normalized));
     }
     c.roomBassXoverHz = std::clamp (finite (c.roomBassXoverHz, d.roomBassXoverHz), 40.0f, 20000.0f);
@@ -777,6 +866,7 @@ void SectionReverbEngine::prepare (double sampleRate)
     lineLength_ = lineAlloc - 32u;
     for (auto& line : lines_)
         line.assign (lineAlloc, 0.0f);
+    auditorium_.prepare(rate_);
     earlyFilter_.setRate (rate_);
     reverbFilter_.setRate (rate_);
     prepared_ = true;
@@ -807,6 +897,12 @@ void SectionReverbEngine::clear() noexcept
 void SectionReverbEngine::reset() noexcept
 {
     const ModelTable& model = modelTable (config_.model);
+    previousWetPeak_ = 0.0f;
+    if (auditoriumModel())
+    {
+        auditorium_.configure(config_, true);
+        auditorium_.reset();
+    }
     ranSinceClear_ = false;
     for (int ch = 0; ch < 2; ++ch)
     {
@@ -847,7 +943,7 @@ void SectionReverbEngine::reset() noexcept
     spreadState_ = SpreadChange::Idle;
     shapeDirty_ = spreadDirty_ = false;
     setShapeTargets();
-    for (unsigned k = 0; k < static_cast<unsigned> (kSpreadTaps); ++k)
+    for (unsigned k = 0; k < static_cast<unsigned> (spreadTapCount()); ++k)
     {
         positionSpreadTap (k);
         spreadGain_[k].reset (shapeTarget_[k]);
@@ -901,6 +997,7 @@ void SectionReverbEngine::apply (const SectionReverbConfig& c) noexcept
     // Each changed value takes its own path, in this order.
     const SectionReverbConfig old = config_;
     config_ = c;
+    if (auditoriumModel()) auditorium_.configure(c, false);
     if (c.diffusion != old.diffusion)
         diffusion_.arm (std::min (std::max (c.diffusion * 0.01f, 0.0f), 1.0f), 200.0f, rate_);
     if (c.predelayMs != old.predelayMs || c.spread != old.spread)
@@ -927,6 +1024,7 @@ void SectionReverbEngine::apply (const SectionReverbConfig& c) noexcept
         stage1SizePending_ = true;
         readSizeScale_ = sizeScale() * rate_.srScale;
         requestSize();
+        if (nestedModel()) { updateLanes(false); reapplyTapSlope_ = true; }
     }
     if (c.reverbTime != old.reverbTime)
     {
@@ -1013,15 +1111,47 @@ void SectionReverbEngine::process (const float* inL, const float* inR, float* ou
 
 void SectionReverbEngine::processBlock() noexcept
 {
+    // Hall II limits its input before diffusion. Classify NaNs by their
+    // bits since fast-math builds may assume that every float is a number.
+    if (config_.model == static_cast<int> (SectionReverbModel::Hall))
+        for (auto& channel : inBus_)
+            for (float& x : channel)
+            {
+                std::uint32_t bits;
+                std::memcpy (&bits, &x, sizeof (bits));
+                x = (bits & 0x7fffffffu) > 0x7f800000u ? 0.0f : std::clamp (x, -4.0f, 4.0f);
+            }
     // Every silent input channel block draws one number from the tail's generator.
     for (int ch = 0; ch < 2; ++ch)
         if (std::all_of (std::begin (inBus_[ch]), std::end (inBus_[ch]), [] (float v) { return v == 0.0f; }))
-            nextRandom();
-    stage1Block();
+        {
+            if (auditoriumModel()) auditorium_.nextRandom();
+            else nextRandom();
+        }
+    if (auditoriumModel())
+    {
+        lineBlock(inBus_);
+        float send[2][kBlock], filtered[2][kBlock];
+        float peak = 0.0f;
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < kBlock; ++i)
+            {
+                auto& bus = spread_[ch].bus;
+                send[ch][i] = bus[0][i] + bus[1][i] + bus[2][i];
+                bus[4][i] = bus[3][i];
+                peak = std::max(peak, std::fabs(inBus_[ch][i]));
+            }
+        auditorium_.filterInput(send, filtered);
+        stage1Block(filtered);
+        auditorium_.processBlock(diffused_, lane_, peak, previousWetPeak_);
+        mixBlock();
+        return;
+    }
+    stage1Block(inBus_);
     if (roomModel())
         earlyBlock();
     else
-        lineBlock();
+        lineBlock(diffused_);
     tailBlock();
     mixBlock();
 }
@@ -1083,7 +1213,7 @@ void SectionReverbEngine::advanceStage1Size() noexcept
     stage1SizeBlend_.advanceBlock();
 }
 
-void SectionReverbEngine::stage1Block() noexcept
+void SectionReverbEngine::stage1Block(const float input[2][kBlock]) noexcept
 {
     const ModelTable& model = modelTable (config_.model);
     advanceStage1Size();
@@ -1094,7 +1224,7 @@ void SectionReverbEngine::stage1Block() noexcept
     {
         float x[kBlock];
         for (int i = 0; i < kBlock; ++i)
-            x[i] = inBus_[ch][i] + echoFeedback_[ch][i];
+            x[i] = input[ch][i] + echoFeedback_[ch][i];
         for (int t = 0; t < model.diffuserCount; ++t)
         {
             Allpass& ap = stage1_[ch][t];
@@ -1121,8 +1251,11 @@ void SectionReverbEngine::stage1Block() noexcept
 unsigned SectionReverbEngine::roomPredelaySamples (bool early) const noexcept
 {
     const float value = early ? config_.earlyPredelayMs : config_.reverbPredelayMs;
-    // Samples per millisecond are scaled before the multiply.
-    const float samplesPerMs = early ? rate_.srMs : config_.roomScale * rate_.srMs;
+    if (early)
+        return static_cast<unsigned> (value * rate_.srMs);
+    // Round the scaled rate before converting the feed delay to whole samples.
+    // At 48 kHz a 5 ms feed at scale 1.8 starts at sample 431.
+    const float samplesPerMs = static_cast<float> (double (config_.roomScale) * (double (rate_.sr) / 1000.0));
     return static_cast<unsigned> (value * samplesPerMs);
 }
 
@@ -1361,8 +1494,13 @@ unsigned SectionReverbEngine::linePredelaySamples() const noexcept
 
 void SectionReverbEngine::setShapeTargets() noexcept
 {
+    if (auditoriumModel())
+    {
+        sectionreverb::auditoriumShapeGains(config_.shape, shapeTarget_);
+        return;
+    }
     const int idx = std::min (std::max (static_cast<int> (config_.shape), 0), 64);
-    for (int k = 0; k < kSpreadTaps; ++k)
+    for (int k = 0; k < spreadTapCount(); ++k)
         shapeTarget_[k] = kSectionShapeCurves[k][idx];
 }
 
@@ -1371,7 +1509,8 @@ void SectionReverbEngine::positionSpreadTap (unsigned k) noexcept
     const float spreadNorm = std::min (std::max (config_.spread * 0.01f, 0.0f), 1.0f);
     for (int ch = 0; ch < 2; ++ch)
     {
-        const int base = kSpreadOffsets[ch][k];
+        constexpr int auditoriumOffsets[2][4] {{0, 2390, 8154, 0}, {0, 4497, 13488, 0}};
+        const int base = auditoriumModel() ? auditoriumOffsets[ch][k] : kSpreadOffsets[ch][k];
         const unsigned offset = static_cast<unsigned> (spreadNorm * rate_.srScale * static_cast<float> (base)) + linePredelaySamples();
         spread_[ch].tap[k] = (linePhase_ + lineLength_ - offset % lineLength_) % lineLength_;
     }
@@ -1394,7 +1533,7 @@ void SectionReverbEngine::advanceSpread() noexcept
             else if (shapeDirty_)
             {
                 shapeDirty_ = false;
-                for (int k = 0; k < kSpreadTaps; ++k)
+                for (int k = 0; k < spreadTapCount(); ++k)
                     spreadGain_[k].arm (shapeTarget_[k], 25.0f, rate_);
                 spreadState_ = SpreadChange::Shape;
             }
@@ -1413,7 +1552,7 @@ void SectionReverbEngine::advanceSpread() noexcept
             spreadGain_[movingTap_].advanceBlock();
             if (! spreadGain_[movingTap_].ramping())
             {
-                if (++movingTap_ == static_cast<unsigned> (kSpreadTaps))
+                if (++movingTap_ == static_cast<unsigned> (spreadTapCount()))
                     spreadState_ = SpreadChange::Idle;
                 else
                 {
@@ -1424,7 +1563,7 @@ void SectionReverbEngine::advanceSpread() noexcept
             break;
         case SpreadChange::Shape:
             spreadState_ = SpreadChange::Idle;
-            for (int k = 0; k < kSpreadTaps; ++k)
+            for (int k = 0; k < spreadTapCount(); ++k)
             {
                 spreadGain_[k].advanceBlock();
                 if (spreadGain_[k].ramping())
@@ -1482,17 +1621,17 @@ void SectionReverbEngine::updateVoices (bool snap) noexcept
         echoes_[e].sync (snap);
 }
 
-void SectionReverbEngine::lineBlock() noexcept
+void SectionReverbEngine::lineBlock(const float input[2][kBlock]) noexcept
 {
     const ModelTable& model = modelTable (config_.model);
     advanceSpread();
     for (int ch = 0; ch < 2; ++ch)
     {
         float* line = lines_[static_cast<std::size_t> (ch)].data();
-        std::copy_n (diffused_[ch], kBlock, line + linePhase_);
+        std::copy_n (input[ch], kBlock, line + linePhase_);
         if (linePhase_ == 0)
-            std::copy_n (diffused_[ch], kBlock, line + lineLength_);
-        for (int k = 0; k < kSpreadTaps; ++k)
+            std::copy_n (input[ch], kBlock, line + lineLength_);
+        for (int k = 0; k < spreadTapCount(); ++k)
         {
             const std::uint32_t tap = spread_[ch].tap[k];
             const float gain = spreadGain_[k].current();
@@ -1564,6 +1703,11 @@ void SectionReverbEngine::resetTail() noexcept
         x.write = 0;
         x.maxDelay = static_cast<std::uint32_t> (table.maxDelay);
         x.delayScale = x.delayTarget = scale;
+        if (nestedModel())
+        {
+            constexpr unsigned groups[] {0, 2, 1, 3, 0, 2};
+            x.nested.reset(groups[s], static_cast<float>(table.latticeDelay), scale, x.write, x.length);
+        }
         x.apDelay = static_cast<std::uint32_t> (static_cast<float> (table.latticeDelay) * x.delayScale);
         x.apIdx = (x.write + x.length - (x.apDelay % x.length)) % x.length;
         x.morphOffset = static_cast<std::uint32_t> (static_cast<float> (x.maxDelay) * x.delayScale);
@@ -1598,7 +1742,8 @@ void SectionReverbEngine::resetTail() noexcept
 void SectionReverbEngine::updateLanes (bool snap) noexcept
 {
     const ModelTable& model = modelTable (config_.model);
-    const float g = rtGain (config_.model, config_.reverbTime);
+    float g = rtGain (config_.model, config_.reverbTime);
+    if (nestedModel()) g *= nestedMaxGain(config_.sizeMeters) / 0.99f;
     const float bassRt = std::min (std::max (config_.bassRt, 0.01f), 10.0f);
     const float delta = std::pow (g, 1.0f / bassRt) - g;
     rtG_ = g;
@@ -1653,6 +1798,7 @@ void SectionReverbEngine::configureDamping (bool snap, bool updateCross) noexcep
 void SectionReverbEngine::setTapSlope (float value) noexcept
 {
     const ModelTable& model = modelTable (config_.model);
+    if (model.sectionCount == 0) return;
     computeTapSlope (value, std::pow (10.0f, model.tapGainDb / 20.0f), model.sections[0].tapCount, tapWeights_);
     // A tenth of the value is kept and re-applied after a decay change (and once after a reset),
     // so the re-applied slope reads from the table's middle.
@@ -1664,8 +1810,15 @@ void SectionReverbEngine::requestSize() noexcept
     const float target = sizeScale() * rate_.srScale;
     for (int s = 0; s < modelTable (config_.model).sectionCount; ++s)
     {
-        sections_[static_cast<std::size_t> (s)].delayTarget = target;
-        sections_[static_cast<std::size_t> (s)].delayPending = true;
+        auto& x = sections_[static_cast<std::size_t> (s)];
+        x.delayTarget = target;
+        x.delayPending = true;
+        if (nestedModel())
+        {
+            if (x.nested.requestSize(target) == sectionreverb::NestedSection::MorphAction::FadeOut)
+                x.morphRamp.arm(0.0f, 200.0f, rate_);
+            x.delayScale = x.nested.sizeScale();
+        }
     }
     mod_.kick = 3;
     secondary_.kick = 3;
@@ -2041,9 +2194,11 @@ void SectionReverbEngine::sequencerBlock() noexcept
     const int group = advanceSequencer (mod_);
     if (group >= 0)
         retargetGroup (group, readSizeScale_, wanderSamples());
-    // The second sequencer moves no taps here; it runs for the numbers it draws, which set the
-    // hop offsets the first one gets.
-    advanceSequencer (secondary_);
+    const int secondaryGroup = advanceSequencer (secondary_);
+    if (nestedModel() && secondaryGroup >= 0)
+        for (auto& x : sections_)
+            x.nested.retarget(secondaryGroup, wanderSamples(), x.write, x.length, x.morphOffset,
+                              [this] { return rand01(); });
     if (mod_.kick != 0 && --mod_.kick == 0)
     {
         mod_.rate = config_.spinHz;
@@ -2101,16 +2256,13 @@ void SectionReverbEngine::tailBlock() noexcept
         float* ring = x.ring.data();
         float* raw = x.rawRing.data();
         // Each ring keeps its first block mirrored past its end, so a 32-sample read never wraps.
-        for (std::uint32_t n = 0; n < static_cast<std::uint32_t> (kBlock); ++n)
-        {
-            const std::uint32_t wi = x.write + n;
-            ring[wi] = kout[n];
-            if (wi < 32u)
-                ring[wi + x.length] = kout[n];
-        }
+        std::copy_n (kout, kBlock, ring + x.write);
         std::copy_n (kout, kBlock, raw + x.write);
         if (x.write == 0)
+        {
+            std::copy_n (kout, kBlock, ring + x.length);
             std::copy_n (kout, kBlock, raw + x.length);
+        }
 
         const float inject1 = x.gain1.current();
         const float inject2 = x.gain2.current();
@@ -2118,15 +2270,21 @@ void SectionReverbEngine::tailBlock() noexcept
         {
             // The lattice inside the ring: this sample and the one written apDelay ago exchange.
             const std::uint32_t wi = x.write + n;
-            const float v = ring[x.apIdx];
-            const float w = v * inject1 + ring[wi];
-            ring[wi] = w;
-            if (wi < 32u)
-                ring[wi + x.length] = w;
-            const float vNew = w * inject2 + v;
-            ring[x.apIdx] = vNew;
-            if (x.apIdx < 32u)
-                ring[x.apIdx + x.length] = vNew;
+            if (nestedModel())
+                x.nested.apply(ring, x.length, wi, secondary_.lane[x.nested.shortGroup()][n],
+                               secondary_.lane[x.nested.longGroup()][n], -model.latticeGain);
+            else
+            {
+                const float v = ring[x.apIdx];
+                const float w = v * inject1 + ring[wi];
+                ring[wi] = w;
+                if (wi < 32u)
+                    ring[wi + x.length] = w;
+                const float vNew = w * inject2 + v;
+                ring[x.apIdx] = vNew;
+                if (x.apIdx < 32u)
+                    ring[x.apIdx + x.length] = vNew;
+            }
 
             for (int t = 0; t < table.tapCount; ++t)
             {
@@ -2138,16 +2296,35 @@ void SectionReverbEngine::tailBlock() noexcept
                 x.apIdx = 0;
         }
 
-        x.write = (x.write + kBlock) % x.length;
+        const auto nextBlock = [length = x.length] (std::uint32_t index) {
+            index += kBlock;
+            return index < length ? index : index - length;
+        };
+        x.write = nextBlock (x.write);
         for (int t = 0; t < table.tapCount; ++t)
-            x.tapRead[t] = (x.tapRead[t] + kBlock) % x.length;
+            x.tapRead[t] = nextBlock (x.tapRead[t]);
 
         const float c = x.morphRamp.current();
-        for (std::uint32_t i = 0; i < static_cast<std::uint32_t> (kBlock); ++i)
-            x.morph[i] = c * ring[(x.morphA + i) % x.length] + (1.0f - c) * ring[(x.morphB + i) % x.length];
-        x.morphA = (x.morphA + kBlock) % x.length;
-        x.morphB = (x.morphB + kBlock) % x.length;
-        fadeBlock (x, s);
+        for (int i = 0; i < kBlock; ++i)
+            x.morph[i] = c * ring[x.morphA + i] + (1.0f - c) * ring[x.morphB + i];
+        x.morphA = nextBlock (x.morphA);
+        x.morphB = nextBlock (x.morphB);
+        if (nestedModel())
+        {
+            using Action = sectionreverb::NestedSection::MorphAction;
+            const auto action = x.nested.advanceSize(x.morphRamp.ramping());
+            x.delayScale = x.nested.sizeScale();
+            switch (action)
+            {
+                case Action::Step: x.morphRamp.advanceBlock(); break;
+                case Action::Swap: swapMorph(x); break;
+                case Action::FadeOut: x.morphRamp.arm(0.0f, 200.0f, rate_); break;
+                case Action::Finish: x.morphB = x.morphA; break;
+                case Action::None: break;
+            }
+        }
+        else
+            fadeBlock (x, s);
     }
 
     sequencerBlock();
@@ -2199,6 +2376,12 @@ void SectionReverbEngine::mixBlock() noexcept
     }
     reverbFilter_.process (left, 0);
     reverbFilter_.process (right, 1);
+    if (auditoriumModel())
+    {
+        previousWetPeak_ = 0.0f;
+        for (int i = 0; i < kBlock; ++i)
+            previousWetPeak_ = std::max({previousWetPeak_, std::fabs(left[i]), std::fabs(right[i])});
+    }
     for (int ch = 0; ch < 2; ++ch)
         earlyFilter_.process (early_[ch], ch);
     for (int ch = 0; ch < 2; ++ch)

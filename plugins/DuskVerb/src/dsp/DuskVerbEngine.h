@@ -93,6 +93,7 @@ public:
 
     // Discrete (non-smoothed) controls.
     void setAlgorithm (int index);
+    EngineType engineType() const noexcept { return currentEngine_; }
     void setFreeze (bool frozen);
     // Engine-specific: only the NonLinear engine has a gate. For other
     // engines this is a no-op (the call is forwarded but ignored).
@@ -139,6 +140,8 @@ public:
     void setShimmerFeedbackHpfHz (float hz);    // Shimmer feedback-loop HPF corner (low-cascade survival); default 60
     void setShimmerStereoMod     (float rateHz, float depth); // Shimmer wet stereo chorus/ensemble; depth 0 = bit-null
     void setShimmerHFAir         (float mix);   // Shimmer post-loop +12st air voice (genuine >12k air); mix 0 = bit-null
+    void setShimmerAirInputHighpass (bool enabled) { shimmer_.setAirInputHighpass (enabled); }
+    void setShimmerOctaveTiming (bool enabled) { shimmer_.setOctaveTiming (enabled); }
     void setShimmerUseDenseReverb (bool on);    // Shimmer tank: DenseHall (smooth HF) vs legacy sparse FDN (metallic); false = bit-identical
     void setShimmerUseTailSpin    (bool on);    // Shimmer FDN output spin-comb (smears metallic, keeps FDN cascade/width/HF); false = untouched
     void setShimmerUpVoiceScale   (float v1, float v2);  // Shimmer +12/+24 up-voice scale (mid-tail fill); 1.0/1.0 = bit-identical

@@ -356,6 +356,61 @@ public:
         return c.broadbandGain * y;
     }
 
+    // Transpose a block's fixed coefficients and histories for processing the
+    // independent feedback lines in parallel. The scalar path owns the state
+    // between blocks, including when changing damping modes or freezing.
+    template <int N>
+    struct Bank
+    {
+        struct Shelf { float b0[N], b1[N], b2[N], a1[N], a2[N], z1[N], z2[N]; };
+        Shelf shelves[4];
+        float gain[N];
+
+        void load (const FiveBandDamping (&lines)[N], const Coeffs (&coeffs)[N])
+        {
+            for (int i = 0; i < N; ++i)
+            {
+                const auto copy = [i] (Shelf& dest, const ShelfBiquad& state, float b0, float b1, float b2, float a1, float a2)
+                {
+                    dest.b0[i] = b0; dest.b1[i] = b1; dest.b2[i] = b2;
+                    dest.a1[i] = a1; dest.a2[i] = a2;
+                    dest.z1[i] = state.z1; dest.z2[i] = state.z2;
+                };
+                const auto& c = coeffs[i];
+                copy (shelves[0], lines[i].subS_, c.subB0, c.subB1, c.subB2, c.subA1, c.subA2);
+                copy (shelves[1], lines[i].lowS_, c.lowB0, c.lowB1, c.lowB2, c.lowA1, c.lowA2);
+                copy (shelves[2], lines[i].hiS_,  c.hiB0, c.hiB1, c.hiB2, c.hiA1, c.hiA2);
+                copy (shelves[3], lines[i].airS_, c.airB0, c.airB1, c.airB2, c.airA1, c.airA2);
+                gain[i] = c.broadbandGain;
+            }
+        }
+
+        void store (FiveBandDamping (&lines)[N]) const
+        {
+            for (int i = 0; i < N; ++i)
+            {
+                const auto copy = [i] (ShelfBiquad& dest, const Shelf& src)
+                { dest.z1 = src.z1[i]; dest.z2 = src.z2[i]; };
+                copy (lines[i].subS_, shelves[0]); copy (lines[i].lowS_, shelves[1]);
+                copy (lines[i].hiS_, shelves[2]);  copy (lines[i].airS_, shelves[3]);
+            }
+        }
+
+        void process (float (&values)[N])
+        {
+            for (auto& s : shelves)
+                for (int i = 0; i < N; ++i)
+                {
+                    const float x = values[i];
+                    const float y = s.b0[i] * x + s.z1[i];
+                    s.z1[i] = s.b1[i] * x - s.a1[i] * y + s.z2[i];
+                    s.z2[i] = s.b2[i] * x - s.a2[i] * y;
+                    values[i] = y;
+                }
+            for (int i = 0; i < N; ++i) values[i] *= gain[i];
+        }
+    };
+
 private:
     float       sampleRate_ = 44100.0f;
     ShelfBiquad subS_, lowS_, hiS_, airS_;   // hold z1/z2 state only

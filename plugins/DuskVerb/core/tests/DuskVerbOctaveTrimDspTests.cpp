@@ -11,6 +11,7 @@
 // swell-free, measured against the ideal crossfade and against the trim-free swap. Processing
 // with a trim allocates nothing.
 
+#include "LegacyRoomPresetFixtures.hpp"
 #include "DuskVerbDSP.hpp"
 #include "DuskVerbDv2Voicing.hpp"
 #include "DuskVerbParamTable.hpp"
@@ -102,7 +103,7 @@ const FactoryPreset& presetNamed (const char* name)
 // `preset`'s values, as a host writes them before loading it, at 100 % wet.
 void setPreset (DuskVerbDSP& dsp, const FactoryPreset& preset)
 {
-    duskverb::collectDv2Parameters (preset, [&] (const char* id, float v) {
+    duskverb::test::collectSavedOrFactoryParameters (preset, [&] (const char* id, float v) {
         const int i = duskverb::paramIndexForId (id);
         if (i >= 0) setPlain (dsp, i, v);
     });
@@ -425,7 +426,7 @@ void testTheTrimSitsBeforeTheDuckerAndTheMix()
 void testASwapBetweenTwoTrimsIsClean()
 {
     const FactoryPreset& from = presetNamed ("Bright Hall");
-    const FactoryPreset& to = presetNamed ("Medium Drum Room");
+    const FactoryPreset& to = duskverb::test::sharedPresetNamed ("Medium Drum Room");
     const int swapBlock = (kSettle + 72000) / kBlock, swap = swapBlock * kBlock, n = swap + 24000;
     // Both at their rows' Gain Trim, not DuskVerb 2's level match (kPresetOverrides): the click is
     // read against the swap's own energy, which the incoming preset sets, so turning one preset up

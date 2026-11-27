@@ -194,11 +194,93 @@ void checkOneRateModulation()
     checkf (! identical (oneRate, spread), "FDN: setModRateSpread(false) leaves the tail as it was");
     checkf (identical (renderWith (false, true), oneRate), "FDN: after clearBuffers() the one-rate modulation does not start over");
 }
+
+// Run the same rotating tank through long and short callbacks. The short
+// callbacks read every delay immediately. The long ones include partial tiles,
+// ring wrap, a filter-history handoff, and delays short enough to require
+// feedback from inside the current tile.
+void checkRotatingBlockSizes()
+{
+    constexpr int frames = 133;
+    FDNReverb longBlocks, shortBlocks;
+    for (auto* tank : { &longBlocks, &shortBlocks })
+    {
+        prepare (*tank);
+        tank->setFeedbackRotation (1.2f, 0.7f);
+        tank->setTankDiffusion (0.79f);
+        tank->setModDepth (1.5f);
+        tank->setModRate (37.0f);
+    }
+    float inL[frames], inR[frames], longL[frames], longR[frames], shortL[frames], shortR[frames];
+    float error = 0.0f, peak = 0.0f;
+    uint32_t seed = 37;
+    for (int block = 0; block < 600; ++block)
+    {
+        for (auto* tank : { &longBlocks, &shortBlocks })
+        {
+            if (block == 210 || block == 280) tank->setFreeze (block == 210);
+            if (block == 330)
+            {
+                int lengths[16];
+                for (int i = 0; i < 16; ++i) lengths[i] = 12 + i;
+                tank->setBaseDelays (lengths);
+            }
+            if (block == 400) tank->resetBaseDelays();
+        }
+        for (int i = 0; i < frames; ++i)
+        {
+            seed = 1664525u * seed + 1013904223u;
+            inL[i] = static_cast<float> (static_cast<int32_t> (seed)) * 0x1p-34f;
+            inR[i] = (i & 1) ? inL[i] : -inL[i];
+        }
+        longBlocks.process (inL, inR, longL, longR, frames);
+        for (int i = 0; i < frames; i += 17)
+            shortBlocks.process (inL + i, inR + i, shortL + i, shortR + i, std::min (17, frames - i));
+        for (int i = 0; i < frames; ++i)
+        {
+            error = std::max ({error, std::fabs (longL[i] - shortL[i]), std::fabs (longR[i] - shortR[i])});
+            peak = std::max ({peak, std::fabs (shortL[i]), std::fabs (shortR[i])});
+        }
+    }
+    std::printf ("Rotating tank 133 vs 17 samples: peak %.8g, maximum difference %.8g\n", peak, error);
+    checkf (peak > 0.01f && error < 0.001f * peak, "rotating tank output depends on block length");
+}
+
+void checkDampingHistory()
+{
+    constexpr int lines = 16;
+    FiveBandDamping scalar[lines], switching[lines];
+    FiveBandDamping::Coeffs coeffs[lines];
+    FiveBandDamping::Bank<lines> bank;
+    for (int i = 0; i < lines; ++i)
+        coeffs[i] = FiveBandDamping::designCoeffs (0.92f - 0.01f * i, 0.75f, 0.85f,
+            0.70f, 0.55f + 0.01f * i, 0.985f, 0.93f, 0.66f, 0.33f, kSr);
+
+    float maxError = 0.0f;
+    for (int n = 0; n < 128; ++n)
+    {
+        if (n == 29) bank.load (switching, coeffs);
+        if (n == 87) bank.store (switching);
+        float input[lines], actual[lines];
+        for (int i = 0; i < lines; ++i)
+            actual[i] = input[i] = std::sin (0.037f * (i + 1) * n);
+        if (n >= 29 && n < 87)
+            bank.process (actual);
+        else
+            for (int i = 0; i < lines; ++i) actual[i] = switching[i].process (input[i], coeffs[i]);
+        for (int i = 0; i < lines; ++i)
+            maxError = std::max (maxError, std::abs (actual[i] - scalar[i].process (input[i], coeffs[i])));
+    }
+    std::printf ("Damping history maximum sample error %.9g\n", maxError);
+    checkf (maxError < 1.0e-5f, "parallel damping lost the scalar filter history");
+}
 } // namespace
 
 int main()
 {
     checkTank<FDNReverb> ("FDN");
+    checkRotatingBlockSizes();
+    checkDampingHistory();
     checkOneRateModulation();
     checkTank<DattorroTank> ("Dattorro");
     std::printf (failures == 0 ? "all feedback rotation checks passed\n" : "%d feedback rotation check(s) failed\n", failures);

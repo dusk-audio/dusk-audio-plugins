@@ -2,12 +2,12 @@
 #include "DspUtils.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 
 // ============================================================================
-// ShimmerEngine v8: classic aux-send shimmer topology.
-// See header for full architecture description.
+// Shimmer reverb and its granular pitch voices.
 // ============================================================================
 
 namespace
@@ -16,17 +16,31 @@ namespace
 }
 
 // ============================================================================
-// GranularPitchShifter (kept verbatim from v6 — this is the part that worked)
+// GranularPitchShifter
 // ============================================================================
 
-void ShimmerEngine::GranularPitchShifter::prepare (double sampleRate)
+void ShimmerEngine::GranularPitchShifter::prepare (double sampleRate, float historyMs,
+                                                  const std::vector<float>* timedWindow)
 {
+#if defined(DUSKVERB2_OPTIMIZED_DSP)
+    static const auto window = [] {
+        std::array<float, kGrainSize> weights {};
+        for (int i = 0; i < kGrainSize; ++i)
+            weights[i] = 0.5f * (1.0f - std::cos (kTwoPi * (static_cast<float> (i) / kGrainSize)));
+        return weights;
+    }();
+    legacyWindow_ = window.data();
+#endif
     sampleRate_ = sampleRate;
-    // Buffer = 8 × grain size for plenty of lookback headroom across the
-    // 1.0–4.0 pitch-ratio range.
-    const int bufSize = DspUtils::nextPowerOf2 (8 * kGrainSize);
-    buffer_.assign (static_cast<size_t> (bufSize), 0.0f);
-    mask_ = bufSize - 1;
+    historySamples_ = static_cast<int> (std::lround (sampleRate * 0.001 * historyMs));
+    // Room for the requested delay and the full modulated read at any pitch.
+    timedWeights_ = timedWindow ? timedWindow->data() : nullptr;
+    timedGrainSize_ = timedWindow ? static_cast<int> (timedWindow->size()) : kGrainSize;
+    selectGrainWindow();
+    const int maxGrain = std::max (kGrainSize, timedGrainSize_);
+    const int capacity = DspUtils::nextPowerOf2 (std::max (kLegacyCapacity, historySamples_ + 4 * maxGrain));
+    buffer_.assign (static_cast<size_t> (capacity), 0.0f);
+    mask_ = (timedHistory_ ? capacity : kLegacyCapacity) - 1;
     clear();
     updateAntiAliasCutoff();
 }
@@ -63,17 +77,49 @@ void ShimmerEngine::GranularPitchShifter::clear()
 {
     std::fill (buffer_.begin(), buffer_.end(), 0.0f);
     writePos_ = 0;
-    phase1_   = 0;
-    phase2_   = kGrainSize / 2;
-    readPos1_ = 0.0f;
-    readPos2_ = static_cast<float> (kGrainSize) * 0.5f;
+    resetGrains();
     aaStage1_.clear();
     aaStage2_.clear();
 }
 
+void ShimmerEngine::GranularPitchShifter::selectGrainWindow()
+{
+    const bool useTimedWindow = timedHistory_ && timedWeights_ != nullptr;
+    grainSize_ = useTimedWindow ? timedGrainSize_ : kGrainSize;
+#if defined(DUSKVERB2_OPTIMIZED_DSP)
+    grainWindow_ = useTimedWindow ? timedWeights_ : legacyWindow_;
+#endif
+}
+
+void ShimmerEngine::GranularPitchShifter::setTimedHistory (bool enabled)
+{
+    if (timedHistory_ == enabled) return;
+    timedHistory_ = enabled;
+    selectGrainWindow();
+    if (buffer_.empty()) return;
+    mask_ = (enabled ? static_cast<int> (buffer_.size()) : kLegacyCapacity) - 1;
+    writePos_ &= mask_;
+    resetGrains();
+}
+
+void ShimmerEngine::GranularPitchShifter::resetGrains()
+{
+    // A preset with no descending voices leaves these oscillators idle. Start
+    // a new descent from its seed on recall, regardless of the preceding preset.
+    if (timedHistory_ && pitchRatio_ < 1.0f) ratioMod_ = initialRatioMod_;
+    phase1_ = 0;
+    phase2_ = grainSize_ / 2;
+    readPos1_ = timedHistory_ ? static_cast<float> (writePos_) - grainLookback() : 0.0f;
+    readPos2_ = timedHistory_ ? readPos1_ + static_cast<float> (phase2_) * (pitchRatio_ - 1.0f)
+                              : static_cast<float> (phase2_);
+}
+
 void ShimmerEngine::GranularPitchShifter::setPitchRatio (float ratio)
 {
+    const float previous = pitchRatio_;
     pitchRatio_ = std::clamp (ratio, 0.5f, 4.0f);
+    if (timedHistory_ && pitchRatio_ != previous && writePos_ == 0 && phase1_ == 0)
+        resetGrains();
     updateAntiAliasCutoff();
 }
 
@@ -85,13 +131,23 @@ void ShimmerEngine::GranularPitchShifter::setModulation (float rateHz, float dep
     ratioMod_.setDepth (1.0f);
     ratioModDepth_ = depth;
     ratioModEnabled_ = (depth > 0.0f);
+    initialRatioMod_ = ratioMod_;
+}
+
+float ShimmerEngine::GranularPitchShifter::grainLookback() const
+{
+    if (!timedHistory_) return std::ceil ((pitchRatio_ - 1.0f) * kGrainSize) + 64.0f;
+    // A downward grain falls behind the write head as it plays. Starting it
+    // ahead of that head would read the previous ring cycle until it wraps.
+    const float fastest = pitchRatio_ * (1.0f + ratioModDepth_);
+    return static_cast<float> (historySamples_) + 64.0f * grainSize_ / kGrainSize
+         + std::ceil (std::max (0.0f, fastest - 1.0f) * grainSize_);
 }
 
 void ShimmerEngine::GranularPitchShifter::startNewGrain (int& phase, float& readPos)
 {
     phase = 0;
-    const float lookback = std::ceil ((pitchRatio_ - 1.0f) * static_cast<float> (kGrainSize)) + 64.0f;
-    readPos = static_cast<float> (writePos_) - lookback;
+    readPos = static_cast<float> (writePos_) - grainLookback();
 }
 
 float ShimmerEngine::GranularPitchShifter::readLinear (float pos) const
@@ -133,13 +189,16 @@ float ShimmerEngine::GranularPitchShifter::process (float input)
     const float v1 = readLinear (readPos1_);
     const float v2 = readLinear (readPos2_);
 
-    // Hann window per grain.
-    const float t1 = static_cast<float> (phase1_) / static_cast<float> (kGrainSize);
-    const float t2 = static_cast<float> (phase2_) / static_cast<float> (kGrainSize);
+#if defined(DUSKVERB2_OPTIMIZED_DSP)
+    const float out = v1 * grainWindow_[phase1_] + v2 * grainWindow_[phase2_];
+#else
+    const float t1 = static_cast<float> (phase1_) / static_cast<float> (grainSize_);
+    const float t2 = static_cast<float> (phase2_) / static_cast<float> (grainSize_);
     const float w1 = 0.5f * (1.0f - std::cos (kTwoPi * t1));
     const float w2 = 0.5f * (1.0f - std::cos (kTwoPi * t2));
 
     const float out = v1 * w1 + v2 * w2;
+#endif
 
     // Slow random-walk modulation of the per-sample read advance. At ±0.5%
     // ratio variation (≈ ±8 cents) the pitch sounds steady, but each cascade
@@ -159,8 +218,8 @@ float ShimmerEngine::GranularPitchShifter::process (float input)
     readPos2_ += effectiveRatio;
     ++phase1_;
     ++phase2_;
-    if (phase1_ >= kGrainSize) startNewGrain (phase1_, readPos1_);
-    if (phase2_ >= kGrainSize) startNewGrain (phase2_, readPos2_);
+    if (phase1_ >= grainSize_) startNewGrain (phase1_, readPos1_);
+    if (phase2_ >= grainSize_) startNewGrain (phase2_, readPos2_);
 
     writePos_ = (writePos_ + 1) & mask_;
     return out;
@@ -170,13 +229,65 @@ float ShimmerEngine::GranularPitchShifter::process (float input)
 // ShimmerEngine
 // ============================================================================
 
+void ShimmerEngine::OctaveSpread::prepare (double sampleRate, float lengthMs)
+{
+    const int length = std::max (1, static_cast<int> (std::lround (sampleRate * 0.001 * lengthMs)));
+    delay.assign (static_cast<size_t> (length), 0.0f);
+    middleOffset = length / 2;
+    write = 0;
+}
+
+void ShimmerEngine::OctaveSpread::clear()
+{
+    std::fill (delay.begin(), delay.end(), 0.0f);
+    write = 0;
+}
+
+float ShimmerEngine::OctaveSpread::process (float sample)
+{
+    const int length = static_cast<int> (delay.size());
+    int middle = write + middleOffset;
+    if (middle >= length) middle -= length;
+    const float output = 0.39f * sample + 0.45f * delay[middle] + 0.8f * delay[write];
+    delay[write] = sample;
+    if (++write == length) write = 0;
+    return output;
+}
+
 void ShimmerEngine::prepare (double sampleRate, int maxBlockSize)
 {
     sampleRate_ = sampleRate;
     maxBlockSize_ = maxBlockSize;
 
-    pitchL_.prepare (sampleRate);
-    pitchR_.prepare (sampleRate);
+    // The interval between overlapping grains is part of the octave voicing.
+    // Hold it in seconds across host rates and share the Hann table across voices.
+    constexpr double overlapSeconds = (GranularPitchShifter::kGrainSize / 2) / 48000.0;
+    const int halfGrain = std::max (1, static_cast<int> (std::lround (sampleRate * overlapSeconds)));
+    const int length = 2 * halfGrain;
+    timedGrainWindow_.resize (static_cast<size_t> (length));
+    for (int i = 0; i < length; ++i)
+        timedGrainWindow_[static_cast<size_t> (i)] = 0.5f * (1.0f - std::cos (kTwoPi * (static_cast<float> (i) / length)));
+
+    // At high rates each upper octave takes longer to emerge. Feed enough of
+    // the delayed wet back into the tank for the later octaves to reach level.
+    const float rateStep = std::clamp (static_cast<float> (sampleRate / 48000.0 - 1.0), 0.0f, 3.0f);
+    const float above96k = std::max (0.0f, rateStep - 1.0f);
+    const float upperReturnMs = 232.0f + 95.0f * rateStep;
+    firstUpperInputGain_ = 0.48f + 0.12f * above96k;
+    secondUpperInputGain_ = 1.0f + 0.12f * rateStep;
+    firstUpperReturnGain_ = 1.30f + 0.16f * rateStep + 0.14f * above96k;
+    secondUpperReturnGain_ = 0.50f + 0.17f * rateStep;
+    // At 44.1 kHz both upper voices need more initial excitation to reach
+    // their buildup levels. Keep the second voice's recirculating gain lower.
+    const float lowRate = std::clamp (static_cast<float> ((48000.0 - sampleRate) / 3900.0), 0.0f, 1.0f);
+    lowerOctaveScale_ = 1.0f + 0.16f * lowRate;
+    firstUpperInputGain_ *= 1.0f + 0.22f * lowRate;
+    firstUpperReturnGain_ *= 1.0f + 0.10f * lowRate;
+    secondUpperInputGain_ *= 1.0f + 0.07f * lowRate;
+    secondUpperReturnGain_ *= 1.0f - 0.05f * lowRate;
+    const float firstOctaveDelayMs = 5.0f * std::min (rateStep, 1.0f);
+    pitchL_.prepare (sampleRate, firstOctaveDelayMs, &timedGrainWindow_);
+    pitchR_.prepare (sampleRate, firstOctaveDelayMs, &timedGrainWindow_);
 
     // Defocus the cascade peaks via random-walk pitch-ratio modulation.
     // For peak smearing to work, the modulation must change appreciably
@@ -190,33 +301,37 @@ void ShimmerEngine::prepare (double sampleRate, int maxBlockSize)
     // flutter from tape and tube modulators in the loop.
     pitchL_.setModulation (5.7f, 0.015f, 0xC0FFEEu);
     pitchR_.setModulation (7.3f, 0.015f, 0xBADC0DEu);
-    pitch2L_.prepare (sampleRate);
-    pitch2R_.prepare (sampleRate);
+    const float upperOctaveDelayMs = 263.0f + 30.0f * std::min (rateStep, 1.0f);
+    pitch2L_.prepare (sampleRate, upperOctaveDelayMs, &timedGrainWindow_);
+    pitch2R_.prepare (sampleRate, upperOctaveDelayMs, &timedGrainWindow_);
     pitch2L_.setModulation (4.9f, 0.020f, 0x5EED01u);
     pitch2R_.setModulation (6.7f, 0.020f, 0x5EED02u);
-    pitchDownL_.prepare (sampleRate);
-    pitchDownR_.prepare (sampleRate);
+    pitchDownL_.prepare (sampleRate, 0.0f, &timedGrainWindow_);
+    pitchDownR_.prepare (sampleRate, 0.0f, &timedGrainWindow_);
     pitchDownL_.setModulation (5.3f, 0.018f, 0xD0117Au);
     pitchDownR_.setModulation (6.1f, 0.018f, 0xD0117Bu);
     pitchDownL_.setPitchRatio (kVoiceDownRatio);   // −1 oct (×0.5 → 500 Hz)
     pitchDownR_.setPitchRatio (kVoiceDownRatio);
-    pitchSubL_.prepare (sampleRate);
-    pitchSubR_.prepare (sampleRate);
+    pitchSubL_.prepare (sampleRate, 0.0f, &timedGrainWindow_);
+    pitchSubR_.prepare (sampleRate, 0.0f, &timedGrainWindow_);
     pitchSubL_.setModulation (4.7f, 0.018f, 0x5B0117Au);
     pitchSubR_.setModulation (5.9f, 0.018f, 0x5B0117Bu);
     pitchSubL_.setPitchRatio (kVoiceSubRatio);     // −2 oct (×0.25 → 250 Hz)
     pitchSubR_.setPitchRatio (kVoiceSubRatio);
     // Dry-fed octave cascade: 4 mono −12 st stages, each modulated at its own rate/seed so the
     // octave reads as a smooth band (not a discrete mode). Feed-forward from the dry input.
+    const std::array<float, kNumOctaves> octaveDelayMs { 25.0f, 156.0f, 175.0f + 52.5f * above96k, 0.0f };
+    constexpr std::array<float, kTimedStages> spreadMs { 500.0f, 690.0f, 535.0f };
     for (int i = 0; i < kNumOctaves; ++i)
     {
-        octGenL_[i].prepare (sampleRate);
+        if (i < kTimedStages) octaveSpreads_[i].prepare (sampleRate, spreadMs[i]);
+        octGenL_[i].prepare (sampleRate, octaveDelayMs[i], &timedGrainWindow_);
         octGenL_[i].setPitchRatio (0.5f);          // −1 oct per stage (cascade: 500/250/125/62)
         octGenL_[i].setModulation (4.3f + 0.6f * static_cast<float> (i), 0.020f,
                                    0x0C7A5E01u + static_cast<std::uint32_t> (i));
     }
     stereoMod_.prepare (sampleRate);
-    air_.prepare (sampleRate);
+    air_.prepare (sampleRate, upperReturnMs, timedGrainWindow_);
     air_.setMix (airMix_);
     stereoMod_.setParams (stereoModRate_, stereoModDepth_, sampleRate);
     tailSpin_.prepare (sampleRate);
@@ -266,8 +381,9 @@ void ShimmerEngine::prepare (double sampleRate, int maxBlockSize)
     const int requestedDelay = static_cast<int> (sampleRate * 0.050);
     fbDelaySamples_   = std::max (requestedDelay, maxBlockSize + 1);
     fbDelayWritePos_  = 0;
-    fbDelayLineL_.assign (static_cast<size_t> (fbDelaySamples_), 0.0f);
-    fbDelayLineR_.assign (static_cast<size_t> (fbDelaySamples_), 0.0f);
+    const int upperDelay = std::max (fbDelaySamples_, static_cast<int> (std::lround (sampleRate * upperReturnMs * 0.001)));
+    fbDelayLineL_.assign (static_cast<size_t> (upperDelay), 0.0f);
+    fbDelayLineR_.assign (static_cast<size_t> (upperDelay), 0.0f);
 
     const float sr = static_cast<float> (sampleRate);
     fbHpfL_.setHPCutoff (feedbackHpfHz_, sr);
@@ -303,6 +419,7 @@ void ShimmerEngine::prepare (double sampleRate, int maxBlockSize)
 
 void ShimmerEngine::clearBuffers()
 {
+    for (auto& spread : octaveSpreads_) spread.clear();
     pitchL_.clear();
     pitchR_.clear();
     pitch2L_.clear();
@@ -462,6 +579,15 @@ void ShimmerEngine::setUpVoiceScale (float v1, float v2)
     voice1Scale_ = std::clamp (v1, 0.0f, 4.0f);
     voice2Scale_ = std::clamp (v2, 0.0f, 4.0f);
 }
+void ShimmerEngine::setOctaveTiming (bool enabled)
+{
+    timedOctaves_ = enabled;
+    if (!enabled && fbDelaySamples_ > 0) fbDelayWritePos_ %= fbDelaySamples_;
+    for (auto& octave : octGenL_) octave.setTimedHistory (enabled);
+    for (auto* voice : { &pitchL_, &pitchR_, &pitch2L_, &pitch2R_,
+                         &pitchDownL_, &pitchDownR_, &pitchSubL_, &pitchSubR_, &air_.shifterL, &air_.shifterR })
+        voice->setTimedHistory (enabled);
+}
 void ShimmerEngine::setOctaveCascade (const float gains[4])
 {
     bool any = false;
@@ -507,6 +633,7 @@ void ShimmerEngine::updatePitchRatio()
 void ShimmerEngine::process (const float* inL, const float* inR,
                              float* outL, float* outR, int numSamples)
 {
+    if (numSamples <= 0) return;
     if (! prepared_)
     {
         std::memset (outL, 0, sizeof (float) * static_cast<size_t> (numSamples));
@@ -521,18 +648,19 @@ void ShimmerEngine::process (const float* inL, const float* inR,
     const float satCeiling   = 2.0f;
     const float fb           = feedbackGain_;
 
-    // ── Pass 1: build reverb input = drive(input) + softClipped(pitched fb).
-    // The pitch shifter NO LONGER processes the dry input — only the delayed
-    // wet feedback. That preserves the natural reverb tail for the dry
-    // signal (first-pass through reverb is unpitched) and adds the shimmer
-    // cascade purely via the feedback loop.
-    //
-    // Pass 1 walks a local read cursor through the 50 ms circular delay
-    // line; Pass 3 walks the member write cursor through the same line.
-    // Both start at fbDelayWritePos_ and advance per sample, so the wet
-    // sample written at slot k in this block is the one read back at slot
-    // k after the buffer wraps once (= fbDelaySamples_ samples later).
-    int readPos = fbDelayWritePos_;
+    // Read the feedback block before the tank writes its new samples in pass 3.
+    // The lower voices use the short return. The longer upper return gives
+    // successive upward shifts time to build after the initial excitation.
+    const float excitation = frozen_ ? 0.0f : std::min (1.0f, pitchSemitones_ / 12.0f);
+    const float octaveScale = timedOctaves_ ? lowerOctaveScale_ : 1.0f;
+    const float subGain = subMix_ * octaveScale;
+    const float firstExcitation = firstUpperInputGain_ * excitation;
+    const float secondExcitation = secondUpperInputGain_ * excitation;
+    const int octaveCount = timedOctaves_ && octGain_[3] == 0.0f ? kTimedStages : kNumOctaves;
+    const int delayLength = timedOctaves_ ? static_cast<int> (fbDelayLineL_.size()) : fbDelaySamples_;
+    int upperRead = fbDelayWritePos_;
+    int readPos = upperRead + delayLength - fbDelaySamples_;
+    if (readPos >= delayLength) readPos -= delayLength;
     for (int n = 0; n < numSamples; ++n)
     {
         // Drive softClip on input — the saturation knob still affects the
@@ -549,10 +677,23 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         // 500-1k). Deep Blue Day boosts these to regenerate the mid tail harder on transients
         // (the snare body ×2/×4 → the target 250 Hz-1 kHz body). Default 1.0 → ×1.0f bypass
         // → bit-identical to legacy for Black Hole + every other preset.
-        float pitchedFbL = kVoice1Mix * voice1Scale_ * pitchL_.process (fbSrcL)
-                         + kVoice2Mix * voice2Scale_ * pitch2L_.process (fbSrcL);
-        float pitchedFbR = kVoice1Mix * voice1Scale_ * pitchR_.process (fbSrcR)
-                         + kVoice2Mix * voice2Scale_ * pitch2R_.process (fbSrcR);
+        float firstL = fbSrcL, firstR = fbSrcR, secondL = fbSrcL, secondR = fbSrcR;
+        if (timedOctaves_)
+        {
+            // The first reflections excite the upper voices directly. The
+            // delayed return then carries the higher octaves through the tank.
+            const float upperL = fbDelayLineL_[static_cast<size_t> (upperRead)];
+            const float upperR = fbDelayLineR_[static_cast<size_t> (upperRead)];
+            firstL = firstUpperReturnGain_ * upperL + firstExcitation * driveL;
+            firstR = firstUpperReturnGain_ * upperR + firstExcitation * driveR;
+            secondL = secondUpperReturnGain_ * upperL + secondExcitation * driveL;
+            secondR = secondUpperReturnGain_ * upperR + secondExcitation * driveR;
+            if (++upperRead == delayLength) upperRead = 0;
+        }
+        float pitchedFbL = kVoice1Mix * voice1Scale_ * pitchL_.process (firstL)
+                         + kVoice2Mix * voice2Scale_ * pitch2L_.process (secondL);
+        float pitchedFbR = kVoice1Mix * voice1Scale_ * pitchR_.process (firstR)
+                         + kVoice2Mix * voice2Scale_ * pitch2R_.process (secondR);
         // Octave-DOWN voice IN THE FEEDBACK: pitch the feedback down −1 oct + add back.
         // The loop regenerates the descending ladder (500→250→125 Hz) GRADUALLY over
         // its 50 ms passes → loud deep low that builds SMOOTHLY (no abrupt "kick-in"
@@ -573,9 +714,9 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         // (byte-identical on non-shimmer presets; recursive-feedback TU, see the .h note).
         if (subMix_ > 0.0f)
         {
-            pitchedFbL += subMix_ * DspUtils::softClip (pitchSubL_.process (fbSrcL),
+            pitchedFbL += subGain * DspUtils::softClip (pitchSubL_.process (fbSrcL),
                                                         kFeedbackSoftClipKnee, kFeedbackSoftClipCeil);
-            pitchedFbR += subMix_ * DspUtils::softClip (pitchSubR_.process (fbSrcR),
+            pitchedFbR += subGain * DspUtils::softClip (pitchSubR_.process (fbSrcR),
                                                         kFeedbackSoftClipKnee, kFeedbackSoftClipCeil);
         }
 
@@ -643,18 +784,26 @@ void ShimmerEngine::process (const float* inL, const float* inR,
             // input on release. (When frozen the reverb discards its input anyway; this keeps the
             // generator state aligned with the freeze so there's no unfreeze transient.)
             float src = frozen_ ? 0.0f : 0.5f * (inL[n] + inR[n]);
-            for (int i = 0; i < kNumOctaves; ++i)
+            for (int i = 0; i < octaveCount; ++i)
             {
                 src = octGenL_[i].process (src);        // cascade: 1k→500→250→125→62
+                if (timedOctaves_ && i < kTimedStages)
+                {
+                    // Give the first descending octave a little more attack
+                    // while later stages receive the entire spread.
+                    if (i == 0) octMono += 0.12f * octGain_[0] * src;
+                    src = octaveSpreads_[i].process (src);
+                }
                 octMono += octGain_[i] * src;
             }
+            octMono *= octaveScale;
         }
 
         // Mix node: dry input + pitched feedback + dry-fed octaves → reverb input.
         reverbInL_[static_cast<size_t> (n)] = driveL + fbL + octMono;
         reverbInR_[static_cast<size_t> (n)] = driveR + fbR + octMono;
 
-        if (++readPos >= fbDelaySamples_) readPos = 0;
+        if (++readPos >= delayLength) readPos = 0;
     }
 
     // ── Pass 2: reverb on the (dry + pitched-fb) mix → wet. ──
@@ -675,11 +824,10 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         const float wR = wetR_[static_cast<size_t> (n)];
 
         // wet (with up + down pitched feedback already folded in by the loop) →
-        // delay line. The down octave regenerates through the SAME loop as the up
-        // shimmer → both octaves build with identical timing (no late "kick-in").
+        // delay line. Each voice reads its own return time on the next pass.
         fbDelayLineL_[static_cast<size_t> (fbDelayWritePos_)] = wL;
         fbDelayLineR_[static_cast<size_t> (fbDelayWritePos_)] = wR;
-        if (++fbDelayWritePos_ >= fbDelaySamples_) fbDelayWritePos_ = 0;
+        if (++fbDelayWritePos_ >= delayLength) fbDelayWritePos_ = 0;
 
         float oL = wL, oR = wR;
 
@@ -691,7 +839,10 @@ void ShimmerEngine::process (const float* inL, const float* inR,
         // unaffected). depth 0 → struct inactive → oL/oR unchanged → bit-null.
         // Post-loop HF-air voice (genuine >12 kHz air; bypasses the reverb HF-damp + loop LPF).
         // Taps the raw wet (wL/wR), pitches its 6-12 kHz up to 12-24 k. mix 0 → bit-null.
-        if (air_.active) air_.process (wL, wR, oL, oR);
+        float airL = wL, airR = wR;
+        // Both the octave voice and the noise envelope follow the filtered wet signal.
+        air_.filterInput (airL, airR);
+        if (air_.active) air_.process (airL, airR, oL, oR);
         if (stereoMod_.active) stereoMod_.process (oL, oR);
         // Tail noise floor — envelope-tracked to the wet, fades with the decay (a
         // dense noise-like fade; masks the sparse-mode ring). gain 0 → skipped → bit-null.
@@ -709,12 +860,12 @@ void ShimmerEngine::process (const float* inL, const float* inR,
                 const float tgt = present ? (1.0f - noiseDuckAmt_) : 1.0f;
                 noiseDuckG_ += noiseDuckSlew_ * (tgt - noiseDuckG_);
                 float nl = 0.0f, nr = 0.0f;
-                tailNoise_.process (wL, wR, nl, nr);
+                tailNoise_.process (airL, airR, nl, nr);
                 oL += noiseDuckG_ * nl;
                 oR += noiseDuckG_ * nr;
             }
             else
-                tailNoise_.process (wL, wR, oL, oR);
+                tailNoise_.process (airL, airR, oL, oR);
         }
         // Output limiter. h==1 → plain tanh (bit-null). h>1 → h*tanh(x/h): the
         // knee moves to ±h so long-decay buildup (Deep Blue Day) stays linear
