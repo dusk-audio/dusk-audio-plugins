@@ -15,7 +15,7 @@ tagline: Algorithmic reverb with eleven engines (pre-release)
 
 DuskVerb is an algorithmic reverb with eleven distinct engines under one user interface. Each engine targets a different reverb territory: **Plate** is the classic dense plate that works on almost everything; **Vintage Plate** is the darker, steely vintage-plate character; **Smooth Plate** is a smooth six-allpass plate; **Chamber** is a studio chamber and tight-room voice; **Spring** is the surf-guitar spring sound; **Gated** produces the gated 1980s drum sound and other non-natural curves; **Shimmer** adds pitched sparkle above and warmth below the tail; **Reverse** is the swelling reverse effect; **Hall** is a realistic per-octave-tuned hall; **Tiled Room** is a bright tiled room; and **Dense Hall** is a lush, densely diffused hall.
 
-Use it where you would use any reverb. Vocals, drums, guitars, and full-mix space all have an engine in DuskVerb that is voiced for them. The 20 factory presets give you starting points for each engine.
+Use it where you would use any reverb. Vocals, drums, guitars, and full-mix space all have an engine in DuskVerb that is voiced for them. The 20 factory presets are starting points, covering every engine except Smooth Plate.
 
 It is not a convolution reverb (use Convolution Reverb for IR-based work), and it is not a delay/multitap effect. It is an eleven-in-one algorithmic reverb that lets you pick the right engine for the job.
 
